@@ -1,0 +1,45 @@
+[
+  {
+    "name": "Private data and administrative access boundaries",
+    "sanity": true,
+    "viewport": "mobile",
+    "covers": ["session authentication", "bootstrap allowlist", "anonymous denial", "role boundaries", "account provisioning and deactivation", "account linking", "scoped student reads"],
+    "description": "Verify privacy before sign-in and access only after an authorized account is provisioned.",
+    "steps": ["Open the public site signed out and verify no student names or balances are shown.", "Sign in as an unprovisioned account and verify an account-not-enabled error and no dashboard data.", "Sign in with the configured administrator and create a teacher account in a center, then sign out.", "Sign in as that teacher and verify that user management and center creation are unavailable, and only the assigned circle's students are visible.", "As administrator deactivate the teacher, then verify the teacher cannot reload protected data.", "As administrator create student and guardian accounts, link each to one student, and verify each account's reports show only linked students.", "Sign out and verify private data disappears."],
+    "expected": "Unauthenticated and unprovisioned users cannot access private data; scopes and disabled accounts are enforced by the backend."
+  },
+  {
+    "name": "Center, teacher, circle and student management persists",
+    "viewport": "desktop",
+    "covers": ["center create/read", "user create/read", "circle create/read", "student create/read/update", "student transfer", "input validation", "persistence after reload"],
+    "description": "Verify the administrator's setup and student lifecycle after database connection.",
+    "steps": ["Sign in as the configured administrator.", "Create center QA Center and a teacher account assigned to it, then create QA Circle A and QA Circle B. Assign the teacher to A.", "Attempt to assign the same teacher to B and verify a visible duplicate-assignment error.", "Attempt to add an empty student name and verify validation; add QA Student to A with valid values.", "Transfer QA Student to B and change its status to suspended.", "Refresh, return to students and verify the new circle and status. Restore active status."],
+    "expected": "Records persist, teacher uniqueness is enforced, and invalid input cannot create records."
+  },
+  {
+    "name": "Attendance and Quran records appear in dated reports",
+    "viewport": "mobile",
+    "covers": ["attendance create/update/read", "memorization and review", "recitation", "verse validation", "student reports", "date filters", "print/PDF"],
+    "description": "Verify daily records and their durable reporting outcomes.",
+    "setup": ["As administrator create QA Report Center, QA Report Circle and active QA Report Student assigned to that circle."],
+    "steps": ["Record QA Report Student present on 2026-09-16; change to late and refresh. Reopen that date and verify late.", "Attempt memorization in surah 1 from verse 1 to 8 and verify a visible rejection.", "Save valid new memorization, review and recitation in surah 1 verses 1 to 7 dated 2026-09-16.", "Open the student's report for 2026-09-16 through 2026-09-16 and verify all records, then choose a nonoverlapping period and verify those records are absent.", "Restore the report period and open Print / Save PDF, verifying only the report is included."],
+    "expected": "Daily data survives refresh and reports accurately include only the chosen student's records within the selected dates."
+  },
+  {
+    "name": "Points and reward fulfillment keep consistent balances",
+    "viewport": "desktop",
+    "covers": ["points ledger", "insufficient balance", "reward catalog", "reward create", "reward redemption", "stock update", "confirmation", "persistence"],
+    "setup": ["As administrator create QA Reward Center, QA Reward Circle and QA Reward Student with zero points."],
+    "description": "Verify awards cannot overdraw points or stock.",
+    "steps": ["Add 20 points to QA Reward Student with reason QA Award.", "Create QA Prize costing 15 points with stock 1.", "Begin redeeming the prize and cancel the confirmation; verify balance and stock are unchanged.", "Confirm redemption and refresh. Verify student balance 5, stock 0 and a deduction entry in the student's report.", "Attempt a further redemption and a deduction of 10 points; verify visible errors and unchanged balance."],
+    "expected": "Confirmed fulfillment deducts the exact points and stock once per successful operation; insufficient balance or stock causes no successful write."
+  },
+  {
+    "name": "Published news and connection failure states",
+    "viewport": "desktop",
+    "covers": ["news publish/read", "public content", "database setup status", "error state and retry"],
+    "description": "Verify public content and truthful connection status.",
+    "steps": ["As the configured administrator publish news titled QA Published News.", "Sign out and verify the news appears publicly without student data.", "Use the connection retry button if setup status is displayed; verify that unconfigured state does not claim a connected database."],
+    "expected": "Published news is public, student information stays protected, and unavailable database setup is explicit."
+  }
+]
