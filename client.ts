@@ -1,101 +1,122 @@
 import { createAuthClient } from '@neondatabase/neon-js/auth';
 
-type RequestOptions = Record<string, unknown> | undefined;
+const authBaseUrl = import.meta.env.VITE_NEON_AUTH_URL as string | undefined;
+const authClient = authBaseUrl ? createAuthClient(authBaseUrl) : null;
 
-type NeonAuthUser = {
-  id?: string;
-  userId?: string;
-  email?: string;
-  name?: string;
-};
+async function getAccessToken(): Promise<string | null> {
+  if (!authClient) return null;
 
-const authUrl = import.meta.env.VITE_NEON_AUTH_URL as string | undefined;
-const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
-
-const createNeonAuthClient = createAuthClient as unknown as (url: string, options?: unknown) => any;
-const authClient = authUrl
-  ? createNeonAuthClient(authUrl, { fetchOptions: { credentials: 'include' } })
-  : null;
-
-async function readError(response: Response) {
   try {
-    return await response.json();
+    const tokenResult = await authClient.token?.();
+
+    if (typeof tokenResult === 'string') return tokenResult;
+    if (tokenResult?.token) return tokenResult.token;
+    if (tokenResult?.accessToken) return tokenResult.accessToken;
   } catch {
-    return { message: `HTTP ${response.status}` };
+    // نكمل لمحاولة قراءة الجلسة
+  }
+
+  try {
+    const sessionResult = await authClient.getSession?.();
+    const session = sessionResult?.data ?? sessionResult;
+
+    return (
+      session?.session?.token ||
+      session?.token ||
+      session?.accessToken ||
+      null
+    );
+  } catch {
+    return null;
   }
 }
 
-async function getJwtToken(): Promise<string | null> {
-  if (!authClient) return null;
-  const result = await (authClient as any).token?.();
-  return result?.data?.token || result?.token || null;
-}
+async function request(path: string, method: string = 'GET', body?: unknown) {
+  const token = await getAccessToken();
 
-async function request(method: string, path: string, payload?: RequestOptions) {
-  const token = await getJwtToken();
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
-  if (payload !== undefined) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${apiBase}${path}`, {
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(path, {
     method,
     headers,
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-    credentials: 'include',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const data = response.status === 204 ? null : await readError(response);
-  if (!response.ok) {
-    const error = new Error(data?.message || data?.error || 'تعذر إتمام الطلب') as Error & {
-      response?: { data: unknown; status: number };
-    };
-    error.response = { data, status: response.status };
-    throw error;
+
+  const text = await response.text();
+
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
   }
-  return { data };
+
+  if (!response.ok) {
+    const message =
+      data?.error ||
+      data?.message ||
+      `Request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data;
 }
 
 export const api = {
-  get: (path: string) => request('GET', path),
-  post: (path: string, data?: RequestOptions) => request('POST', path, data),
-  put: (path: string, data?: RequestOptions) => request('PUT', path, data),
-  delete: (path: string) => request('DELETE', path),
+  get: (path: string) => request(path, 'GET'),
+  post: (path: string, body?: unknown) => request(path, 'POST', body),
+  put: (path: string, body?: unknown) => request(path, 'PUT', body),
+  delete: (path: string) => request(path, 'DELETE'),
 };
 
 export const auth = {
   async getUser() {
     if (!authClient) return null;
-    const result = await (authClient as any).getSession?.();
-    const user: NeonAuthUser | undefined = result?.data?.user || result?.user;
-    if (!user) {
-      localStorage.removeItem('ashour_neon_auth_started');
+
+    try {
+      const sessionResult = await authClient.getSession?.();
+      const session = sessionResult?.data ?? sessionResult;
+      const user = session?.user ?? session?.session?.user ?? null;
+
+      if (!user) return null;
+
+      return {
+        userId: user.id || user.userId || user.sub || user.email,
+        email: user.email,
+        name: user.name || user.fullName || user.email,
+      };
+    } catch {
       return null;
     }
-    localStorage.setItem('ashour_neon_auth_started', '1');
-    return {
-      userId: user.id || user.userId || '',
-      email: user.email || '',
-      name: user.name || user.email || 'مستخدم',
-    };
   },
+
   isSignedIn() {
-    return localStorage.getItem('ashour_neon_auth_started') === '1';
+    return true;
   },
+
   async signIn() {
     if (!authClient) {
-      const err = new Error('لم يتم ضبط رابط تسجيل الدخول VITE_NEON_AUTH_URL') as Error & { code?: string };
-      err.code = 'auth_not_configured';
-      throw err;
+      throw new Error('Neon Auth is not configured');
     }
-    localStorage.setItem('ashour_neon_auth_started', '1');
-    const callbackURL = window.location.origin;
-    if ((authClient as any).signIn?.social) {
-      return (authClient as any).signIn.social({ provider: 'google', callbackURL });
-    }
-    throw new Error('طريقة تسجيل الدخول غير متاحة في مكتبة المصادقة الحالية');
+
+    await authClient.signIn.social({
+      provider: 'google',
+      callbackURL: window.location.origin,
+    });
   },
+
   async signOut() {
-    if (authClient) await (authClient as any).signOut?.();
-    localStorage.removeItem('ashour_neon_auth_started');
+    if (!authClient) return;
+    await authClient.signOut();
   },
 };
