@@ -14,7 +14,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "pg": "^8.13.1",
-    "@neondatabase/neon-js": "^0.7.0-beta.4",
+    "@neondatabase/neon-js": "0.7.0-beta",
     "jose": "^5.9.6"
   },
   "optionalDependencies": {
