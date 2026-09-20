@@ -69,7 +69,7 @@ async function request(path: string, method: string = 'GET', body?: unknown) {
     throw new Error(message);
   }
 
-  return data;
+  return { data };
 }
 
 export const api = {
