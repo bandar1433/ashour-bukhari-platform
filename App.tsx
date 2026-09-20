@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { api, auth } from './lib/client';
+import { api, auth } from './client';
 import './index.css';
 
 type Row = { id: string; [key: string]: any };
