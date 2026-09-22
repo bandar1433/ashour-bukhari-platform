@@ -24,7 +24,6 @@ const statuses: Record<string, string> = {
 const recordTypes: Record<string, string> = {
   new: 'حفظ جديد',
   review: 'مراجعة',
-  recitation: 'تسميع',
 };
 const today = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -294,10 +293,10 @@ export default function App() {
       ? [
           'المراكز والفروع',
           'الحلقات',
+          'الخطة الأسبوعية',
           'الطلاب',
           'الحضور اليومي',
           'الحفظ والمراجعة',
-          'التسميع',
         ]
       : []),
     'النقاط والجوائز',
@@ -367,7 +366,7 @@ export default function App() {
               <h1>منصة حلقات عاشور بخاري</h1>
               <h2>إدارة متكاملة للحلقات القرآنية</h2>
               <p>
-                إدارة المراكز والحلقات، ومتابعة الحفظ والمراجعة والتسميع
+                إدارة المراكز والحلقات، ومتابعة الحفظ والمراجعة
                 والحضور، في مساحة واحدة للمعلم والأسرة والإدارة.
               </p>
               <div className="actions">
@@ -396,7 +395,7 @@ export default function App() {
             <div className="featureGrid">
               <article>
                 <h3>للمعلم</h3>
-                <p>تسجيل الحضور والحفظ والمراجعة والتسميع.</p>
+                <p>تسجيل الحضور والحفظ والمراجعة.</p>
               </article>
               <article>
                 <h3>للإدارة</h3>
@@ -536,6 +535,37 @@ export default function App() {
                 />
               </section>
             )}
+            {panel === 'الخطة الأسبوعية' && (
+              <section className="panel">
+                <h2>الخطة الأسبوعية</h2>
+                <p>يستطيع المعلم تحديث خطة حلقته، وتظهر الخطة المعتمدة مباشرة للإدارة.</p>
+                <Table
+                  heads={['الحلقة', 'المعلم', 'الخطة الأسبوعية', 'حفظ']}
+                  rows={circles.map((c) => [
+                    c.name,
+                    c.teacher_name || 'غير معين',
+                    <textarea
+                      aria-label={`الخطة الأسبوعية ${c.name}`}
+                      value={form[`plan_${c.id}`] ?? c.schedule ?? ''}
+                      onChange={(e) => set(`plan_${c.id}`, e.target.value)}
+                    />,
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          await api.put(`/api/circles/${c.id}`, {
+                            schedule: form[`plan_${c.id}`] ?? c.schedule ?? '',
+                          });
+                          await refresh(account);
+                        }, 'تم حفظ الخطة الأسبوعية')
+                      }
+                    >
+                      حفظ
+                    </button>,
+                  ])}
+                />
+              </section>
+            )}
             {panel === 'الطلاب' && (
               <section className="panel">
                 {manager && (
@@ -561,7 +591,7 @@ export default function App() {
                   rows={students.map((s) => [
                     s.full_name,
                     s.center_name,
-                    manager ? (
+                    staff ? (
                       <select
                         aria-label={`حلقة ${s.full_name}`}
                         value={s.circle_id || ''}
@@ -587,7 +617,7 @@ export default function App() {
                     ) : (
                       s.circle_name || '—'
                     ),
-                    manager ? (
+                    staff ? (
                       <select
                         aria-label={`حالة ${s.full_name}`}
                         value={s.status}
@@ -663,15 +693,12 @@ export default function App() {
                 />
               </section>
             )}
-            {['الحفظ والمراجعة', 'التسميع'].includes(panel) && (
+            {panel === 'الحفظ والمراجعة' && (
               <section className="panel">
                 <form
                   onSubmit={submit('/api/memorization', {
                     ...form,
-                    record_type:
-                      panel === 'التسميع'
-                        ? 'recitation'
-                        : form.record_type || 'new',
+                    record_type: form.record_type || 'new',
                     record_date: form.record_date || today(),
                     surah_no: Number(form.surah_no),
                     from_ayah: Number(form.from_ayah),
@@ -680,8 +707,7 @@ export default function App() {
                   })}
                 >
                   {studentPick}
-                  {panel !== 'التسميع' && (
-                    <Field label="نوع الإنجاز">
+                  <Field label="نوع الإنجاز">
                       <select
                         value={form.record_type || 'new'}
                         onChange={(e) => set('record_type', e.target.value)}
@@ -690,7 +716,6 @@ export default function App() {
                         <option value="review">مراجعة</option>
                       </select>
                     </Field>
-                  )}
                   {input('surah_no', 'رقم السورة', 'number')}
                   {input('from_ayah', 'من الآية', 'number')}
                   {input('to_ayah', 'إلى الآية', 'number')}
@@ -830,7 +855,7 @@ export default function App() {
                         statuses[a.status],
                       ])}
                     />
-                    <h3>الحفظ والمراجعة والتسميع</h3>
+                    <h3>الحفظ والمراجعة</h3>
                     <Table
                       heads={[
                         'التاريخ',
