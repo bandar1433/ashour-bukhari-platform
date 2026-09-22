@@ -145,6 +145,7 @@ export default function App() {
   const [attendance, setAttendance] = useState<Row[]>([]);
   const [day, setDay] = useState(today());
   const [report, setReport] = useState<any>(null);
+  const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
   const staff =
@@ -241,6 +242,30 @@ export default function App() {
       current = false;
     };
   }, [account, panel, day]);
+  useEffect(() => {
+    let active = true;
+    const surah = Number(form.surah_no);
+    const from = Number(form.from_ayah);
+    const to = Number(form.to_ayah);
+    if (!surah || !from) {
+      setMushafPages({});
+      return () => { active = false; };
+    }
+    const loadPage = async (ayah: number) => {
+      const response = await fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/quran-uthmani`);
+      if (!response.ok) throw new Error('تعذر تحديد صفحة المصحف');
+      const result = await response.json();
+      return Number(result?.data?.page);
+    };
+    Promise.all([loadPage(from), loadPage(to || from)])
+      .then(([fromPage, toPage]) => {
+        if (active) setMushafPages({ from: fromPage, to: toPage });
+      })
+      .catch(() => {
+        if (active) setMushafPages({});
+      });
+    return () => { active = false; };
+  }, [form.surah_no, form.from_ayah, form.to_ayah]);
   const submit = (path: string, payload: unknown) => async (e: FormEvent) => {
     e.preventDefault();
     await run(async () => {
@@ -778,6 +803,17 @@ export default function App() {
                         ))}
                     </select>
                   </Field>
+                  {mushafPages.from && (
+                    <div className="notice" style={{ margin: '8px 0' }}>
+                      صفحة مصحف المدينة: {mushafPages.from}
+                      {mushafPages.to && mushafPages.to !== mushafPages.from
+                        ? ` — ${mushafPages.to}`
+                        : ''}
+                      {mushafPages.to && mushafPages.from
+                        ? ` • عدد الصفحات: ${mushafPages.to - mushafPages.from + 1}`
+                        : ''}
+                    </div>
+                  )}
                   {input('grade', 'الدرجة من 100', 'number', false)}
                   {input('notes', 'ملاحظات', 'text', false)}
                   <Field label="التاريخ">
