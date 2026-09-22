@@ -569,6 +569,21 @@ const routes: Record<string, RouterMiddleware[]> = {
       201,
     );
   }),
+  'GET /api/competitions': protectedRoute(async (ctx) => {
+    const u=await actor(ctx);
+    return json((await query(`SELECT * FROM competitions WHERE center_id IS NULL OR $1='system_admin' OR center_id=$2::uuid ORDER BY start_date DESC`,[u.role,u.center_id])).rows);
+  }),
+  'POST /api/competitions': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,managers); const b=body(ctx);
+    const centerId=u.role==='system_admin'&&b.center_id?await center(u,b.center_id):u.center_id;
+    return json((await query(`INSERT INTO competitions(center_id,title,start_date,end_date,status,created_by) VALUES($1,$2,$3,$4,'active',$5) RETURNING *`,[centerId,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),u.id])).rows[0],201);
+  }),
+  'POST /api/competitions/:id/score': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const s=await student(u,b.student_id); const competitionId=id(ctx.params.id);
+    const comp=(await query(`SELECT id FROM competitions WHERE id=$1 AND (center_id IS NULL OR $2='system_admin' OR center_id=$3::uuid)`,[competitionId,u.role,u.center_id])).rows[0];
+    if(!comp) throw new Fault('المسابقة خارج نطاق صلاحيتك',404);
+    return json((await query(`INSERT INTO competition_entries(competition_id,student_id,score,notes,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(competition_id,student_id) DO UPDATE SET score=excluded.score,notes=excluded.notes,updated_by=excluded.updated_by,updated_at=now() RETURNING *`,[competitionId,s.id,integer(b.score,0,100),typeof b.notes==='string'?b.notes.slice(0,1000):null,u.id])).rows[0]);
+  }),
   'POST /api/points': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
     permit(u, staff);
