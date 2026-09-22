@@ -141,6 +141,7 @@ export default function App() {
   const [users, setUsers] = useState<Row[]>([]);
   const [news, setNews] = useState<Row[]>([]);
   const [rewards, setRewards] = useState<Row[]>([]);
+  const [competitions, setCompetitions] = useState<Row[]>([]);
   const [form, setForm] = useState<Record<string, string>>({});
   const [attendance, setAttendance] = useState<Row[]>([]);
   const [day, setDay] = useState(today());
@@ -188,6 +189,7 @@ export default function App() {
     setCircles(h);
     setUsers(u);
     setRewards(r);
+    if (isStaff) setCompetitions(await get('/api/competitions'));
   };
   const loadSession = async () => {
     const identity = await auth.getUser();
@@ -332,6 +334,7 @@ export default function App() {
           'الطلاب',
           'الحضور اليومي',
           'الحفظ والمراجعة',
+          'المسابقات',
         ]
       : []),
     'النقاط والجوائز',
@@ -830,6 +833,42 @@ export default function App() {
                   يمكن مراجعة السجلات المحفوظة من قسم التقارير. أرقام الآيات وفق
                   العد الكوفي في مصحف حفص.
                 </p>
+              </section>
+            )}
+            {panel === 'المسابقات' && (
+              <section className="panel">
+                <h2>المسابقات</h2>
+                {manager && (
+                  <form onSubmit={submit('/api/competitions', {
+                    title: form.competition_title,
+                    start_date: form.competition_start,
+                    end_date: form.competition_end,
+                    center_id: form.center_id || undefined,
+                  })}>
+                    {admin && centerPick}
+                    {input('competition_title','اسم المسابقة')}
+                    {input('competition_start','تاريخ البداية','date')}
+                    {input('competition_end','تاريخ النهاية','date')}
+                    {saveButton}
+                  </form>
+                )}
+                <Table heads={['المسابقة','البداية','النهاية','الحالة','إدخال نتيجة']} rows={competitions.map((x)=>[
+                  x.title,x.start_date,x.end_date,x.status,
+                  staff ? <button onClick={()=>setForm(f=>({...f,competition_id:x.id}))}>اختيار</button> : '—'
+                ])}/>
+                {staff && form.competition_id && (
+                  <form onSubmit={submit(`/api/competitions/${form.competition_id}/score`, {
+                    student_id: form.student_id,
+                    score: Number(form.competition_score),
+                    notes: form.competition_notes || null,
+                  })}>
+                    <h3>إدخال نتيجة الطالب</h3>
+                    {studentPick}
+                    {input('competition_score','الدرجة من 100','number')}
+                    {input('competition_notes','ملاحظات','text',false)}
+                    {saveButton}
+                  </form>
+                )}
               </section>
             )}
             {panel === 'النقاط والجوائز' && (
