@@ -427,6 +427,22 @@ const routes: Record<string, RouterMiddleware[]> = {
       201,
     );
   }),
+  'PUT /api/circles/:id': protectedRoute(async (ctx) => {
+    const u = await actor(ctx);
+    permit(u, staff);
+    const circleId = id(ctx.params.id);
+    const current = (await query(
+      `SELECT * FROM circles WHERE id=$1 AND ($2='system_admin' OR ($2 IN ('center_manager','supervisor') AND center_id=$3::uuid) OR ($2='teacher' AND teacher_user_id=$4::uuid))`,
+      [circleId, u.role, u.center_id, u.id],
+    )).rows[0];
+    if (!current) throw new Fault('الحلقة خارج نطاق صلاحيتك', 404);
+    const data = body(ctx);
+    const schedule = typeof data.schedule === 'string' ? data.schedule.trim().slice(0, 2000) : current.schedule;
+    return json((await query(
+      'UPDATE circles SET schedule=$1 WHERE id=$2 RETURNING *',
+      [schedule, circleId],
+    )).rows[0]);
+  }),
   'POST /api/students': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
     permit(u, managers);
@@ -445,9 +461,11 @@ const routes: Record<string, RouterMiddleware[]> = {
   }),
   'PUT /api/students/:id': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, managers);
+    permit(u, staff);
     const s = await student(u, ctx.params.id);
     const b = body(ctx);
+    if (u.role === 'teacher' && ('center_id' in b || ('circle_id' in b && b.circle_id !== s.circle_id)))
+      throw new Fault('المعلم يستطيع تعديل بيانات طلاب حلقته دون نقلهم إلى حلقة أخرى', 403);
     const targetCenter = b.center_id
       ? await center(u, b.center_id)
       : s.center_id;
@@ -462,8 +480,8 @@ const routes: Record<string, RouterMiddleware[]> = {
     return json(
       (
         await query(
-          'UPDATE students SET status=$1,center_id=$2,circle_id=$3,updated_at=now() WHERE id=$4 RETURNING *',
-          [status, targetCenter, targetCircle, s.id],
+          'UPDATE students SET full_name=$1,status=$2,center_id=$3,circle_id=$4,updated_at=now() WHERE id=$5 RETURNING *',
+          [typeof b.full_name === 'string' ? text(b.full_name, 'اسم الطالب') : s.full_name, status, targetCenter, targetCircle, s.id],
         )
       ).rows[0],
     );
