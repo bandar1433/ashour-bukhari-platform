@@ -685,50 +685,31 @@ export default function App() {
             )}
             {panel === 'الحضور اليومي' && (
               <section className="panel">
+                <h2>الحضور والانصراف</h2>
                 <Field label="تاريخ الحضور">
-                  <input
-                    type="date"
-                    required
-                    value={day}
-                    onChange={(e) => {
-                      setDay(e.target.value);
-                      setAttendance([]);
-                    }}
-                  />
+                  <input type="date" required value={day} onChange={(e)=>{setDay(e.target.value);setAttendance([])}} />
                 </Field>
                 <Table
-                  heads={['الطالب', 'الحالة المسجلة', 'تسجيل الحضور']}
-                  rows={students
-                    .filter((s) => s.status === 'active')
-                    .map((s) => [
+                  heads={['الطالب','الحالة','الحضور','الانصراف','الإجراءات']}
+                  rows={students.filter((s)=>s.status==='active').map((s)=>{
+                    const a=attendance.find((x)=>x.student_id===s.id);
+                    return [
                       s.full_name,
-                      statuses[
-                        attendance.find((a) => a.student_id === s.id)?.status
-                      ] || 'لم يسجل',
+                      statuses[a?.status]||'لم يسجل',
+                      a?.check_in_at ? new Date(a.check_in_at).toLocaleTimeString('ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}) : '—',
+                      a?.check_out_at ? new Date(a.check_out_at).toLocaleTimeString('ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}) : '—',
                       <div className="actions">
-                        {['present', 'late', 'absent', 'excused'].map((v) => (
-                          <button
-                            key={v}
-                            disabled={busy || !s.circle_id || !day}
-                            onClick={() =>
-                              run(async () => {
-                                await post('/api/attendance', {
-                                  student_id: s.id,
-                                  status: v,
-                                  attendance_date: day,
-                                });
-                                setAttendance(
-                                  await get(`/api/attendance?date=${day}`),
-                                );
-                              }, 'تم تسجيل الحضور')
-                            }
-                          >
-                            {statuses[v]}
-                          </button>
-                        ))}
-                      </div>,
-                    ])}
+                        <button disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,attendance_date:day,action:'check_in'});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تسجيل الحضور')}>حضور</button>
+                        <button disabled={busy||!a?.check_in_at} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,attendance_date:day,action:'check_out'});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تسجيل الانصراف')}>انصراف</button>
+                        {['present','late','absent','excused'].map((v)=><button key={v} disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,status:v,attendance_date:day});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تحديث الحالة')}>{statuses[v]}</button>)}
+                      </div>
+                    ];
+                  })}
                 />
+                <h3>اعتماد اليوم</h3>
+                <div className="actions">
+                  {circles.map((h)=><button key={h.id} disabled={busy} onClick={()=>run(async()=>{await post('/api/attendance/approve',{circle_id:h.id,approval_date:day})},`تم اعتماد حضور ${h.name} ليوم ${day}`)}>اعتماد {h.name}</button>)}
+                </div>
               </section>
             )}
             {panel === 'الحفظ والمراجعة' && (
