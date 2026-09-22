@@ -436,10 +436,10 @@ const routes: Record<string, RouterMiddleware[]> = {
       [circleId, u.role, u.center_id, u.id],
     )).rows[0];
     if (!current) throw new Fault('الحلقة خارج نطاق صلاحيتك', 404);
-    const data = body(ctx);
-    const schedule = typeof data.schedule === 'string' ? data.schedule.trim().slice(0, 2000) : current.schedule;
+    const b = body(ctx);
+    const schedule = typeof b.schedule === 'string' ? b.schedule.trim().slice(0, 2000) : current.schedule;
     return json((await query(
-      'UPDATE circles SET schedule=$1 WHERE id=$2 RETURNING *',
+      'UPDATE circles SET schedule=$1,updated_at=now() WHERE id=$2 RETURNING *',
       [schedule, circleId],
     )).rows[0]);
   }),
@@ -499,26 +499,33 @@ const routes: Record<string, RouterMiddleware[]> = {
     );
   }),
   'POST /api/attendance': protectedRoute(async (ctx) => {
-    const u = await actor(ctx);
-    permit(u, staff);
-    const b = body(ctx);
-    const s = await student(u, b.student_id);
-    if (!s.circle_id || s.status !== 'active')
-      throw new Fault('يلزم طالب نشط مرتبط بحلقة');
-    return json(
-      (
-        await query(
-          `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(student_id,attendance_date) DO UPDATE SET status=excluded.status,recorded_by=excluded.recorded_by RETURNING *`,
-          [
-            s.id,
-            s.circle_id,
-            date(b.attendance_date),
-            choice(b.status, ['present', 'late', 'absent', 'excused']),
-            u.id,
-          ],
-        )
-      ).rows[0],
-    );
+    const u=await actor(ctx); const b=body(ctx); const s=await student(u,b.student_id);
+    if(!s.circle_id||s.status!=='active') throw new Fault('يلزم طالب نشط مرتبط بحلقة');
+    const d=date(b.attendance_date);
+    const nowDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Riyadh',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    if(u.role==='student'&&d!==nowDay) throw new Fault('يمكن للطالب التسجيل في اليوم الحالي فقط',403);
+    if(!staff.includes(u.role)&&u.role!=='student') throw new Fault('ليست لديك صلاحية لهذه العملية',403);
+    const action=typeof b.action==='string'?b.action:'status';
+    if(u.role==='student'&&!['check_in','check_out'].includes(action)) throw new Fault('الطالب يستطيع تسجيل الحضور والانصراف فقط',403);
+    if(action==='check_in') return json((await query(
+      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by,check_in_at) VALUES($1,$2,$3,'present',$4,now())
+       ON CONFLICT(student_id,attendance_date) DO UPDATE SET check_in_at=COALESCE(attendance.check_in_at,now()),recorded_by=excluded.recorded_by RETURNING *`,
+      [s.id,s.circle_id,d,u.id])).rows[0]);
+    if(action==='check_out'){
+      const row=(await query(`UPDATE attendance SET check_out_at=now(),recorded_by=$1 WHERE student_id=$2 AND attendance_date=$3 AND check_in_at IS NOT NULL RETURNING *`,[u.id,s.id,d])).rows[0];
+      if(!row) throw new Fault('يلزم تسجيل الحضور أولاً'); return json(row);
+    }
+    permit(u,staff);
+    return json((await query(
+      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(student_id,attendance_date) DO UPDATE SET status=excluded.status,recorded_by=excluded.recorded_by RETURNING *`,
+      [s.id,s.circle_id,d,choice(b.status,['present','late','absent','excused']),u.id])).rows[0]);
+  }),
+  'POST /api/attendance/approve': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const circleId=id(b.circle_id); const d=date(b.approval_date);
+    const ok=(await query(`SELECT id FROM circles WHERE id=$1 AND ($2='system_admin' OR ($2 IN ('center_manager','supervisor') AND center_id=$3::uuid) OR ($2='teacher' AND teacher_user_id=$4::uuid))`,[circleId,u.role,u.center_id,u.id])).rowCount;
+    if(!ok) throw new Fault('الحلقة خارج نطاق صلاحيتك',403);
+    return json((await query(`INSERT INTO day_approvals(circle_id,approval_date,approved_by) VALUES($1,$2,$3) ON CONFLICT(circle_id,approval_date) DO UPDATE SET approved_by=excluded.approved_by,approved_at=now() RETURNING *`,[circleId,d,u.id])).rows[0]);
   }),
   'POST /api/memorization': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
@@ -561,6 +568,21 @@ const routes: Record<string, RouterMiddleware[]> = {
       ).rows[0],
       201,
     );
+  }),
+  'GET /api/competitions': protectedRoute(async (ctx) => {
+    const u=await actor(ctx);
+    return json((await query(`SELECT * FROM competitions WHERE center_id IS NULL OR $1='system_admin' OR center_id=$2::uuid ORDER BY start_date DESC`,[u.role,u.center_id])).rows);
+  }),
+  'POST /api/competitions': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,managers); const b=body(ctx);
+    const centerId=u.role==='system_admin'&&b.center_id?await center(u,b.center_id):u.center_id;
+    return json((await query(`INSERT INTO competitions(center_id,title,start_date,end_date,status,created_by) VALUES($1,$2,$3,$4,'active',$5) RETURNING *`,[centerId,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),u.id])).rows[0],201);
+  }),
+  'POST /api/competitions/:id/score': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const s=await student(u,b.student_id); const competitionId=id(ctx.params.id);
+    const comp=(await query(`SELECT id FROM competitions WHERE id=$1 AND (center_id IS NULL OR $2='system_admin' OR center_id=$3::uuid)`,[competitionId,u.role,u.center_id])).rows[0];
+    if(!comp) throw new Fault('المسابقة خارج نطاق صلاحيتك',404);
+    return json((await query(`INSERT INTO competition_entries(competition_id,student_id,score,notes,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(competition_id,student_id) DO UPDATE SET score=excluded.score,notes=excluded.notes,updated_by=excluded.updated_by,updated_at=now() RETURNING *`,[competitionId,s.id,integer(b.score,0,100),typeof b.notes==='string'?b.notes.slice(0,1000):null,u.id])).rows[0]);
   }),
   'POST /api/points': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
