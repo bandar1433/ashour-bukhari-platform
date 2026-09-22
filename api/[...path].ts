@@ -499,26 +499,33 @@ const routes: Record<string, RouterMiddleware[]> = {
     );
   }),
   'POST /api/attendance': protectedRoute(async (ctx) => {
-    const u = await actor(ctx);
-    permit(u, staff);
-    const b = body(ctx);
-    const s = await student(u, b.student_id);
-    if (!s.circle_id || s.status !== 'active')
-      throw new Fault('يلزم طالب نشط مرتبط بحلقة');
-    return json(
-      (
-        await query(
-          `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(student_id,attendance_date) DO UPDATE SET status=excluded.status,recorded_by=excluded.recorded_by RETURNING *`,
-          [
-            s.id,
-            s.circle_id,
-            date(b.attendance_date),
-            choice(b.status, ['present', 'late', 'absent', 'excused']),
-            u.id,
-          ],
-        )
-      ).rows[0],
-    );
+    const u=await actor(ctx); const b=body(ctx); const s=await student(u,b.student_id);
+    if(!s.circle_id||s.status!=='active') throw new Fault('يلزم طالب نشط مرتبط بحلقة');
+    const d=date(b.attendance_date);
+    const nowDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Riyadh',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    if(u.role==='student'&&d!==nowDay) throw new Fault('يمكن للطالب التسجيل في اليوم الحالي فقط',403);
+    if(!staff.includes(u.role)&&u.role!=='student') throw new Fault('ليست لديك صلاحية لهذه العملية',403);
+    const action=typeof b.action==='string'?b.action:'status';
+    if(u.role==='student'&&!['check_in','check_out'].includes(action)) throw new Fault('الطالب يستطيع تسجيل الحضور والانصراف فقط',403);
+    if(action==='check_in') return json((await query(
+      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by,check_in_at) VALUES($1,$2,$3,'present',$4,now())
+       ON CONFLICT(student_id,attendance_date) DO UPDATE SET check_in_at=COALESCE(attendance.check_in_at,now()),recorded_by=excluded.recorded_by RETURNING *`,
+      [s.id,s.circle_id,d,u.id])).rows[0]);
+    if(action==='check_out'){
+      const row=(await query(`UPDATE attendance SET check_out_at=now(),recorded_by=$1 WHERE student_id=$2 AND attendance_date=$3 AND check_in_at IS NOT NULL RETURNING *`,[u.id,s.id,d])).rows[0];
+      if(!row) throw new Fault('يلزم تسجيل الحضور أولاً'); return json(row);
+    }
+    permit(u,staff);
+    return json((await query(
+      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(student_id,attendance_date) DO UPDATE SET status=excluded.status,recorded_by=excluded.recorded_by RETURNING *`,
+      [s.id,s.circle_id,d,choice(b.status,['present','late','absent','excused']),u.id])).rows[0]);
+  }),
+  'POST /api/attendance/approve': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const circleId=id(b.circle_id); const d=date(b.approval_date);
+    const ok=(await query(`SELECT id FROM circles WHERE id=$1 AND ($2='system_admin' OR ($2 IN ('center_manager','supervisor') AND center_id=$3::uuid) OR ($2='teacher' AND teacher_user_id=$4::uuid))`,[circleId,u.role,u.center_id,u.id])).rowCount;
+    if(!ok) throw new Fault('الحلقة خارج نطاق صلاحيتك',403);
+    return json((await query(`INSERT INTO day_approvals(circle_id,approval_date,approved_by) VALUES($1,$2,$3) ON CONFLICT(circle_id,approval_date) DO UPDATE SET approved_by=excluded.approved_by,approved_at=now() RETURNING *`,[circleId,d,u.id])).rows[0]);
   }),
   'POST /api/memorization': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
