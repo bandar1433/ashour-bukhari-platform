@@ -609,6 +609,10 @@ export default function App() {
                 {manager && (
                   <form onSubmit={submit('/api/students', form)}>
                     {input('full_name', 'اسم الطالب')}
+                    {input('national_id', 'رقم الهوية', 'text')}
+                    {input('phone', 'رقم الجوال', 'tel')}
+                    {input('birth_date', 'تاريخ الميلاد', 'date', false)}
+                    {input('grade_level', 'المرحلة أو المستوى', 'text', false)}
                     {centerPick}
                     <Field label="الحلقة">
                       <Pick
