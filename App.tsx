@@ -482,7 +482,7 @@ export default function App() {
           </aside>
           <section className="dashboardContent">
             <div className="panel noPrint">
-              <span className="eyebrow">{roles[account.role]}</span>
+              <div className="actions"><button type="button" onClick={() => navigate('لوحة المؤشرات')}>← رجوع</button><span className="eyebrow">{roles[account.role]}</span></div>
               <h1>{panel}</h1>
             </div>
             {panel === 'لوحة المؤشرات' && (
