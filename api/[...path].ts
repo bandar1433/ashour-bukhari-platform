@@ -449,11 +449,16 @@ const routes: Record<string, RouterMiddleware[]> = {
     const b = body(ctx);
     const centerId = await center(u, b.center_id);
     const circleId = await circle(centerId, b.circle_id);
+    const phone = text(b.phone, 'رقم الجوال', 20).replace(/\s+/g, '');
+    if (!/^(?:05\d{8}|\+9665\d{8})$/.test(phone)) throw new Fault('رقم الجوال غير صالح');
+    const nationalId = text(b.national_id, 'رقم الهوية', 20).replace(/\D/g, '');
+    if (!/^\d{10}$/.test(nationalId)) throw new Fault('رقم الهوية يجب أن يتكون من 10 أرقام');
+    if ((await query('SELECT id FROM students WHERE national_id=$1',[nationalId])).rowCount) throw new Fault('رقم الهوية مسجل مسبقاً');
     return json(
       (
         await query(
-          'INSERT INTO students(full_name,center_id,circle_id) VALUES($1,$2,$3) RETURNING *',
-          [text(b.full_name, 'اسم الطالب'), centerId, circleId],
+          'INSERT INTO students(full_name,center_id,circle_id,phone,national_id,birth_date,grade_level) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
+          [text(b.full_name, 'اسم الطالب'), centerId, circleId, phone, nationalId, b.birth_date ? date(b.birth_date) : null, typeof b.grade_level==='string' ? b.grade_level.slice(0,100) : null],
         )
       ).rows[0],
       201,
