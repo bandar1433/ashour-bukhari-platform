@@ -547,7 +547,7 @@ const routes: Record<string, RouterMiddleware[]> = {
           `INSERT INTO memorization_records(student_id,record_type,surah_no,from_ayah,to_ayah,ayah_count,grade,notes,approved,recorded_by,record_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10) RETURNING *`,
           [
             s.id,
-            choice(b.record_type, ['new', 'review', 'recitation']),
+            choice(b.record_type, ['new', 'review']),
             surah,
             from,
             to,
