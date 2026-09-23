@@ -45,6 +45,10 @@ const today = () =>
 const get = async (path: string) => (await api.get(path)).data;
 const post = async (path: string, data: unknown) =>
   (await api.post(path, data)).data;
+function downloadCsv(filename:string, rows:(string|number|null|undefined)[][]) {
+  const csv='\uFEFF'+rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})); a.download=filename; a.click(); URL.revokeObjectURL(a.href);
+}
 function message(e: unknown) {
   const err = e as {
     response?: { data?: { message?: string; error?: string } };
@@ -996,6 +1000,10 @@ export default function App() {
                 <div className="actions noPrint">
                   {['system_admin','center_manager','supervisor'].includes(account.role) && <button onClick={()=>run(async()=>setCenterReport(await get(`/api/reports/center?from=${form.from||'2000-01-01'}&to=${form.to||today()}${admin&&form.center_id?`&center_id=${form.center_id}`:''}`)))}>تقرير المركز</button>}
                   <button onClick={()=>window.print()}>طباعة / حفظ PDF</button>
+                  {centerReport&&<button onClick={()=>downloadCsv('center-report.csv',[
+                    ['الفترة','الطلاب النشطون','الحلقات','الحضور','الغياب','آيات الحفظ الجديد','آيات المراجعة'],
+                    [`${centerReport.from} — ${centerReport.to}`,centerReport.students,centerReport.circles,centerReport.attendance?.present||0,centerReport.attendance?.absent||0,centerReport.memorization?.new_ayahs||0,centerReport.memorization?.review_ayahs||0]
+                  ])}>تصدير Excel / CSV</button>}
                 </div>
                 <form className="noPrint">{admin&&centerPick}{input('from','من تاريخ','date',false)}{input('to','إلى تاريخ','date',false)}</form>
                 {centerReport&&<><div className="stats"><article><b>{centerReport.students}</b><span>الطلاب النشطون</span></article><article><b>{centerReport.circles}</b><span>الحلقات</span></article><article><b>{centerReport.attendance?.present||0}</b><span>حضور</span></article><article><b>{centerReport.attendance?.absent||0}</b><span>غياب</span></article></div><Table heads={['الفترة','آيات الحفظ الجديد','آيات المراجعة']} rows={[[`${centerReport.from} — ${centerReport.to}`,centerReport.memorization?.new_ayahs||0,centerReport.memorization?.review_ayahs||0]]}/></>}
@@ -1038,6 +1046,10 @@ export default function App() {
                     >
                       طباعة / حفظ PDF
                     </button>
+                    <button className="primary noPrint" onClick={()=>downloadCsv(`student-${report.student.full_name}.csv`,[
+                      ['التاريخ','النوع','السورة','من آية','إلى آية','الدرجة','الملاحظات'],
+                      ...report.memorization.map((m:Row)=>[String(m.record_date).slice(0,10),recordTypes[m.record_type],surahNames[Number(m.surah_no)-1]||'',m.from_ayah,m.to_ayah,m.grade??'',m.notes||''])
+                    ])}>تصدير Excel / CSV</button>
                     <h3>الحضور</h3>
                     <Table
                       heads={['التاريخ', 'الحالة']}
