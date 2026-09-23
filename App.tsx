@@ -132,10 +132,32 @@ function Table({ heads, rows }: { heads: string[]; rows: ReactNode[][] }) {
     </div>
   );
 }
+function CountUp({ value }: { value: number }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const target = Number(value) || 0;
+    if (target <= 0) {
+      setShown(0);
+      return;
+    }
+    const started = performance.now();
+    const duration = 700;
+    let frame = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - started) / duration);
+      setShown(Math.round(target * progress));
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [value]);
+  return <>{shown.toLocaleString('ar-SA')}</>;
+}
 export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [dashboard, setDashboard] = useState(false);
   const [panel, setPanel] = useState('لوحة المؤشرات');
+  const [panelHistory, setPanelHistory] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [connection, setConnection] = useState<boolean | null>(null);
@@ -169,6 +191,12 @@ export default function App() {
     ['system_admin', 'center_manager', 'supervisor', 'teacher'].includes(
       account.role,
     );
+  const teacherCanEditStudent = (student: Row) => {
+    if (account?.role !== 'teacher') return true;
+    const registeredAt = student.created_at || student.registration_date;
+    if (!registeredAt) return false;
+    return Date.now() - new Date(registeredAt).getTime() <= 7 * 24 * 60 * 60 * 1000;
+  };
   const set = (key: string, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
   const run = async (action: () => Promise<void>, success = '') => {
@@ -372,7 +400,16 @@ export default function App() {
     ...(admin ? ['المستخدمون والصلاحيات', 'الأخبار والفعاليات'] : []),
   ];
   const navigate = (p: string) => {
+    if (p !== panel) setPanelHistory((history) => [...history, panel].slice(-20));
     setPanel(p);
+    setForm({});
+    setReport(null);
+    setNotice('');
+  };
+  const goBack = () => {
+    const previous = panelHistory[panelHistory.length - 1] || 'لوحة المؤشرات';
+    setPanelHistory((history) => history.slice(0, -1));
+    setPanel(previous);
     setForm({});
     setReport(null);
     setNotice('');
@@ -458,7 +495,7 @@ export default function App() {
               </div>
             </div>
           </section>
-          {publicStats&&<section className="stats"><article><b>{publicStats.students}</b><span>طالب نشط</span></article><article><b>{publicStats.circles}</b><span>حلقة</span></article><article><b>{publicStats.centers}</b><span>مركز</span></article><article><b>{publicStats.records}</b><span>سجل إنجاز</span></article></section>}
+          {publicStats&&<section className="stats"><article><b><CountUp value={Number(publicStats.students)}/></b><span>طالب نشط</span></article><article><b><CountUp value={Number(publicStats.circles)}/></b><span>حلقة</span></article><article><b><CountUp value={Number(publicStats.centers)}/></b><span>مركز</span></article><article><b><CountUp value={Number(publicStats.records)}/></b><span>سجل إنجاز</span></article></section>}
           <section id="about" className="section">
             <h2>رحلة متصلة مع كتاب الله</h2>
             <div className="featureGrid">
@@ -513,7 +550,7 @@ export default function App() {
           </aside>
           <section className="dashboardContent">
             <div className="panel noPrint">
-              <div className="actions"><button type="button" onClick={() => navigate('لوحة المؤشرات')}>← رجوع</button><span className="eyebrow">{roles[account.role]}</span></div>
+              <div className="actions"><button type="button" onClick={goBack} disabled={panel === 'لوحة المؤشرات' && panelHistory.length === 0}>← رجوع</button><span className="eyebrow">{roles[account.role]}</span></div>
               <h1>{panel}</h1>
               {panel === 'مركز التقارير' && <p>التقارير تنشأ آليًا بحسب صلاحية المستخدم، والأصل أسبوعي مع إمكان تغيير الفترة إلى شهري أو ربع سنوي أو نصف سنوي أو سنوي.</p>}
               {panel === 'المكتبة' && <p>مكتبة البرامج والدروس المرتبطة بالمصادر الخارجية مثل YouTube دون تحميل ملفات الفيديو على المنصة.</p>}
@@ -537,7 +574,7 @@ export default function App() {
                     ],
                   ].map(([v, label]) => (
                     <article key={label}>
-                      <b>{v}</b>
+                      <b><CountUp value={Number(v) || 0}/></b>
                       <span>{label}</span>
                     </article>
                   ))}
@@ -692,7 +729,7 @@ export default function App() {
                       <select
                         aria-label={`حالة ${s.full_name}`}
                         value={s.status}
-                        disabled={busy}
+                        disabled={busy || !teacherCanEditStudent(s)}
                         onChange={(e) =>
                           run(async () => {
                             await api.put(`/api/students/${s.id}`, {
@@ -712,7 +749,7 @@ export default function App() {
                       statuses[s.status]
                     ),
                     s.points_balance,
-                    staff ? <button onClick={()=>setForm({edit_student_id:s.id,edit_full_name:s.full_name||'',edit_national_id:s.national_id||'',edit_phone:s.phone||'',edit_birth_date:s.birth_date?String(s.birth_date).slice(0,10):'',edit_grade_level:s.grade_level||'',edit_status:s.status||'active'})}>تعديل البيانات</button> : '—',
+                    staff ? (teacherCanEditStudent(s) ? <button onClick={()=>setForm({edit_student_id:s.id,edit_full_name:s.full_name||'',edit_national_id:s.national_id||'',edit_phone:s.phone||'',edit_birth_date:s.birth_date?String(s.birth_date).slice(0,10):'',edit_grade_level:s.grade_level||'',edit_status:s.status||'active'})}>تعديل البيانات</button> : <span>انتهت مهلة التعديل</span>) : '—',
                   ])}
                 />
               </section>
