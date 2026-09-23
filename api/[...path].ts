@@ -472,10 +472,17 @@ const routes: Record<string, RouterMiddleware[]> = {
   }),
   'POST /api/students': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, managers);
+    permit(u, staff);
     const b = body(ctx);
-    const centerId = await center(u, b.center_id);
-    const circleId = await circle(centerId, b.circle_id);
+    let centerId:string, circleId:string|null;
+    if(u.role==='teacher'){
+      const own=(await query('SELECT id,center_id FROM circles WHERE teacher_user_id=$1 AND is_active LIMIT 1',[u.id])).rows[0];
+      if(!own) throw new Fault('لا توجد حلقة مرتبطة بحساب المعلم',403);
+      centerId=own.center_id; circleId=own.id;
+    } else {
+      centerId=await center(u,b.center_id);
+      circleId=await circle(centerId,b.circle_id);
+    }
     const phone = text(b.phone, 'رقم الجوال', 20).replace(/\s+/g, '');
     if (!/^(?:05\d{8}|\+9665\d{8}|\+?[1-9]\d{7,14})$/.test(phone)) throw new Fault('رقم الجوال غير صالح');
     const nationalId = text(b.national_id, 'رقم الهوية', 30).replace(/\s+/g, '').toUpperCase();
@@ -514,13 +521,18 @@ const routes: Record<string, RouterMiddleware[]> = {
       'status' in b
         ? choice(b.status, ['active', 'excused', 'suspended'])
         : s.status;
+    const nextPhone=typeof b.phone==='string'?text(b.phone,'رقم الجوال',20).replace(/\s+/g,''):s.phone;
+    if(nextPhone && !/^(?:05\d{8}|\+9665\d{8}|\+?[1-9]\d{7,14})$/.test(nextPhone)) throw new Fault('رقم الجوال غير صالح');
+    const nextNationalId=typeof b.national_id==='string'?text(b.national_id,'رقم الهوية',30).replace(/\s+/g,'').toUpperCase():s.national_id;
+    if(nextNationalId && !/^[A-Z0-9-]{5,30}$/.test(nextNationalId)) throw new Fault('رقم الهوية أو الوثيقة غير صالح');
+    if(nextNationalId && (await query('SELECT id FROM students WHERE national_id=$1 AND id<>$2',[nextNationalId,s.id])).rowCount) throw new Fault('رقم الهوية مسجل مسبقاً');
     return json(
       (
         await query(
           'UPDATE students SET full_name=$1,status=$2,center_id=$3,circle_id=$4,phone=$5,national_id=$6,birth_date=$7,grade_level=$8,updated_at=now() WHERE id=$9 RETURNING *',
           [typeof b.full_name === 'string' ? text(b.full_name, 'اسم الطالب') : s.full_name, status, targetCenter, targetCircle,
-           typeof b.phone === 'string' ? text(b.phone,'رقم الجوال',20).replace(/\s+/g,'') : s.phone,
-           typeof b.national_id === 'string' ? text(b.national_id,'رقم الهوية',30).replace(/\s+/g,'').toUpperCase() : s.national_id,
+           nextPhone,
+           nextNationalId,
            b.birth_date ? date(b.birth_date) : s.birth_date,
            typeof b.grade_level === 'string' ? b.grade_level.slice(0,100) : s.grade_level, s.id],
         )
