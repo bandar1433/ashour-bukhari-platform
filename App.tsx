@@ -151,6 +151,8 @@ export default function App() {
   const [weeklyPlans, setWeeklyPlans] = useState<Row[]>([]);
   const [libraryItems, setLibraryItems] = useState<Row[]>([]);
   const [centerReport, setCenterReport] = useState<any>(null);
+  const [rankings, setRankings] = useState<any>(null);
+  const [struggles, setStruggles] = useState<Row[]>([]);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -520,6 +522,7 @@ export default function App() {
                     </article>
                   ))}
                 </div>
+                {staff && <div className="panel"><h2>يحتاجون تدخلك اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setStruggles(await get('/api/struggles')))}>تحديث قائمة المتابعة</button><Table heads={['الطالب','الحلقة','الغياب خلال 14 يومًا','متوسط الأداء']} rows={struggles.map(s=>[s.full_name,s.circle_name||'—',s.absences,s.avg_grade])}/></div>}
                 <div className="panel">
                   <p>
                     تعكس المؤشرات نطاق صلاحيات حسابك. افتح التقارير للاطلاع على
@@ -865,6 +868,14 @@ export default function App() {
                 )}
               </section>
             )}
+            {panel === 'النقاط والجوائز' && (
+              <>
+                <section className="panel">
+                  <h2>الترتيب والتحفيز</h2>
+                  <button disabled={busy} onClick={()=>run(async()=>setRankings(await get('/api/rankings')))}>تحديث الترتيب</button>
+                  {rankings&&<><h3>أفضل 10 على مستوى نطاقك</h3><Table heads={['الترتيب','الطالب','الحلقة','الدرجة']} rows={rankings.top_center.map((r:Row,i:number)=>[i+1,r.full_name,r.circle_name||'—',r.score])}/><h3>أفضل 3 في كل حلقة</h3>{rankings.top_by_circle.map((group:Row[],i:number)=><Table key={i} heads={['الطالب','الحلقة','الدرجة']} rows={group.map(r=>[r.full_name,r.circle_name||'—',r.score])}/>)}</>}
+                </section>
+              </>)} 
             {panel === 'النقاط والجوائز' && (
               <>
                 <section className="panel">
