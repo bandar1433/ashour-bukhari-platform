@@ -653,6 +653,15 @@ const routes: Record<string, RouterMiddleware[]> = {
       await client.query('COMMIT'); return json({success:true,week_start:week,review:rs,new:ns});
     } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
   }),
+  'GET /api/my-day': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,['student','guardian']); const d=date(ctx.query.date||new Date().toISOString().slice(0,10)); const scope=studentScope(u);
+    const week=weekStart(new Date(d+'T12:00:00')); const names=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']; const dn=names[new Date(d+'T12:00:00').getDay()];
+    const rows=(await query(`SELECT s.id,s.full_name,h.name circle_name,wp.new_target,wp.review_target,a.status,a.late_minutes,
+      coalesce((SELECT sum(ayah_count) FROM memorization_records WHERE student_id=s.id AND record_date=$5 AND record_type='new'),0)::int actual_new,
+      coalesce((SELECT sum(ayah_count) FROM memorization_records WHERE student_id=s.id AND record_date=$5 AND record_type='review'),0)::int actual_review
+      FROM students s LEFT JOIN circles h ON h.id=s.circle_id LEFT JOIN weekly_plans wp ON wp.student_id=s.id AND wp.week_start=$4 AND wp.day_name=$6 LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date=$5 WHERE ${scope.sql}`,[...scope.args,week,d,dn])).rows;
+    return json(rows.map((r:any)=>{const nt=Number(r.new_target||0),rt=Number(r.review_target||0),ap=attendancePoints(r.status,r.late_minutes),rv=rt?Math.min(40,Math.round(r.actual_review/rt*40)):40,nw=nt?Math.min(30,Math.round(r.actual_new/nt*30)):30;return {...r,attendance_score:ap,review_score:rv,new_score:nw,total_score:ap==null?null:ap+rv+nw};}));
+  }),
   'GET /api/rankings': protectedRoute(async (ctx) => {
     const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
     const rows=(await query(`SELECT s.id,s.full_name,s.circle_id,h.name circle_name,s.center_id,
@@ -725,6 +734,15 @@ const routes: Record<string, RouterMiddleware[]> = {
     );
     if (!r.rowCount) throw new Fault('الرصيد غير كافٍ لخصم النقاط');
     return json(r.rows[0]);
+  }),
+  'GET /api/weekly-summary': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=new Date(from+'T12:00:00');to.setDate(to.getDate()+5);const end=to.toISOString().slice(0,10);
+    const rows=(await query(`SELECT s.id,s.full_name,
+      count(a.id) FILTER(WHERE a.status IN ('present','late'))::int attended,
+      count(a.id) FILTER(WHERE a.status='absent')::int absent,
+      coalesce(round(avg(m.grade))::int,0) memorization_average
+      FROM students s LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5 LEFT JOIN memorization_records m ON m.student_id=s.id AND m.record_date BETWEEN $4 AND $5 WHERE ${scope.sql} GROUP BY s.id ORDER BY s.full_name`,[...scope.args,from,end])).rows;
+    return json({from,to:end,students:rows});
   }),
   'GET /api/reports/student/:id': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
