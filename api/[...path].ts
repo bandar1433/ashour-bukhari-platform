@@ -712,7 +712,10 @@ const routes: Record<string, RouterMiddleware[]> = {
       WHERE ${scope.sql} AND s.status='active'
       AND ((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent')>=2
         OR coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)<70
-        OR (SELECT count(*) FROM weekly_plans wp WHERE wp.student_id=s.id AND wp.week_start>=current_date-interval '14 days' AND coalesce(wp.review_target::numeric,0)+coalesce(wp.new_target::numeric,0)>0)>=2)
+        OR (SELECT count(*) FROM weekly_plans wp WHERE wp.student_id=s.id AND wp.week_start>=current_date-interval '14 days' AND
+          ((coalesce(wp.review_target::numeric,0)>0 AND coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=wp.week_start + CASE wp.day_name WHEN 'السبت' THEN 0 WHEN 'الأحد' THEN 1 WHEN 'الاثنين' THEN 2 WHEN 'الثلاثاء' THEN 3 WHEN 'الأربعاء' THEN 4 WHEN 'الخميس' THEN 5 END AND m.record_type='review'),0)<wp.review_target::numeric)
+          OR (coalesce(wp.new_target::numeric,0)>0 AND coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=wp.week_start + CASE wp.day_name WHEN 'السبت' THEN 0 WHEN 'الأحد' THEN 1 WHEN 'الاثنين' THEN 2 WHEN 'الثلاثاء' THEN 3 WHEN 'الأربعاء' THEN 4 WHEN 'الخميس' THEN 5 END AND m.record_type='new'),0)<wp.new_target::numeric)))>=2
+        OR (SELECT count(*) FROM generate_series(current_date-interval '13 days',current_date,interval '1 day') d WHERE extract(dow from d)<>5 AND NOT EXISTS(SELECT 1 FROM memorization_records m WHERE m.student_id=s.id AND m.record_type='review' AND m.record_date=d::date))>=3)
       ORDER BY absences DESC,avg_grade`,scope.args)).rows;
     return json(rows.map((r:any)=>({...r,reasons:[
       Number(r.absences)>=2?`غياب متكرر (${r.absences})`:null,
