@@ -711,16 +711,20 @@ const routes: Record<string, RouterMiddleware[]> = {
   }),
   'GET /api/competitions': protectedRoute(async (ctx) => {
     const u=await actor(ctx);
+    if(u.role==='teacher') return json((await query(`SELECT c.* FROM competitions c JOIN circles h ON h.id=c.circle_id WHERE h.teacher_user_id=$1 ORDER BY c.start_date DESC`,[u.id])).rows);
     return json((await query(`SELECT * FROM competitions WHERE center_id IS NULL OR $1='system_admin' OR center_id=$2::uuid ORDER BY start_date DESC`,[u.role,u.center_id])).rows);
   }),
   'POST /api/competitions': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,staff); const b=body(ctx);
     const centerId=u.role==='system_admin'&&b.center_id?await center(u,b.center_id):u.center_id;
-    return json((await query(`INSERT INTO competitions(center_id,title,start_date,end_date,status,created_by) VALUES($1,$2,$3,$4,'active',$5) RETURNING *`,[centerId,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),u.id])).rows[0],201);
+    let circleId:string|null=null, scope='center';
+    if(u.role==='teacher'){const own=(await query('SELECT id FROM circles WHERE teacher_user_id=$1 AND is_active',[u.id])).rows[0];if(!own) throw new Fault('لا توجد حلقة مرتبطة بحساب المعلم',403);circleId=own.id;scope='circle';}
+    else if(b.circle_id){const h=(await query('SELECT id FROM circles WHERE id=$1 AND ($2=\'system_admin\' OR center_id=$3::uuid)',[id(b.circle_id),u.role,u.center_id])).rows[0];if(!h) throw new Fault('الحلقة خارج نطاق صلاحيتك',403);circleId=h.id;scope='circle';}
+    return json((await query(`INSERT INTO competitions(center_id,circle_id,scope,title,start_date,end_date,status,max_points,created_by) VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8) RETURNING *`,[centerId,circleId,scope,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),integer(b.max_points??100,1,10000),u.id])).rows[0],201);
   }),
   'POST /api/competitions/:id/score': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,staff); const b=body(ctx); const s=await student(u,b.student_id); const competitionId=id(ctx.params.id);
-    const comp=(await query(`SELECT id FROM competitions WHERE id=$1 AND (center_id IS NULL OR $2='system_admin' OR center_id=$3::uuid)`,[competitionId,u.role,u.center_id])).rows[0];
+    const comp=(await query(`SELECT c.id,c.circle_id FROM competitions c LEFT JOIN circles h ON h.id=c.circle_id WHERE c.id=$1 AND (c.center_id IS NULL OR $2='system_admin' OR ($2 IN ('center_manager','supervisor') AND c.center_id=$3::uuid) OR ($2='teacher' AND h.teacher_user_id=$4::uuid))`,[competitionId,u.role,u.center_id,u.id])).rows[0];
     if(!comp) throw new Fault('المسابقة خارج نطاق صلاحيتك',404);
     return json((await query(`INSERT INTO competition_entries(competition_id,student_id,score,notes,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(competition_id,student_id) DO UPDATE SET score=excluded.score,notes=excluded.notes,updated_by=excluded.updated_by,updated_at=now() RETURNING *`,[competitionId,s.id,integer(b.score,0,100),typeof b.notes==='string'?b.notes.slice(0,1000):null,u.id])).rows[0]);
   }),
