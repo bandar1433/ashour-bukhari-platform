@@ -548,10 +548,14 @@ const routes: Record<string, RouterMiddleware[]> = {
     if(!staff.includes(u.role)&&u.role!=='student') throw new Fault('ليست لديك صلاحية لهذه العملية',403);
     const action=typeof b.action==='string'?b.action:'status';
     if(u.role==='student'&&!['check_in','check_out'].includes(action)) throw new Fault('الطالب يستطيع تسجيل الحضور والانصراف فقط',403);
-    if(action==='check_in') return json((await query(
-      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by,check_in_at) VALUES($1,$2,$3,'present',$4,now())
-       ON CONFLICT(student_id,attendance_date) DO UPDATE SET check_in_at=COALESCE(attendance.check_in_at,now()),recorded_by=excluded.recorded_by RETURNING *`,
-      [s.id,s.circle_id,d,u.id])).rows[0]);
+    if(action==='check_in') {
+      const circle=(await query('SELECT start_time FROM circles WHERE id=$1',[s.circle_id])).rows[0];
+      let late=0; if(circle?.start_time){const now=new Date();const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit',hour12:false}).format(now).split(':');const cur=Number(parts[0])*60+Number(parts[1]);const st=String(circle.start_time).slice(0,5).split(':');late=Math.max(0,cur-(Number(st[0])*60+Number(st[1])));}
+      const status=late>30?'late':'present';
+      return json((await query(
+      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by,check_in_at,late_minutes) VALUES($1,$2,$3,$4,$5,now(),$6)
+       ON CONFLICT(student_id,attendance_date) DO UPDATE SET check_in_at=COALESCE(attendance.check_in_at,now()),status=CASE WHEN attendance.check_in_at IS NULL THEN excluded.status ELSE attendance.status END,late_minutes=CASE WHEN attendance.check_in_at IS NULL THEN excluded.late_minutes ELSE attendance.late_minutes END,recorded_by=excluded.recorded_by RETURNING *`,
+      [s.id,s.circle_id,d,status,u.id,late])).rows[0]); }
     if(action==='check_out'){
       const row=(await query(`UPDATE attendance SET check_out_at=now(),recorded_by=$1 WHERE student_id=$2 AND attendance_date=$3 AND check_in_at IS NOT NULL RETURNING *`,[u.id,s.id,d])).rows[0];
       if(!row) throw new Fault('يلزم تسجيل الحضور أولاً'); return json(row);
@@ -561,6 +565,12 @@ const routes: Record<string, RouterMiddleware[]> = {
       `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by) VALUES($1,$2,$3,$4,$5)
        ON CONFLICT(student_id,attendance_date) DO UPDATE SET status=excluded.status,recorded_by=excluded.recorded_by RETURNING *`,
       [s.id,s.circle_id,d,choice(b.status,['present','late','absent','excused']),u.id])).rows[0]);
+  }),
+  'PUT /api/circles/:id/start-time': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const circleId=id(ctx.params.id); const b=body(ctx);
+    const t=text(b.start_time,'وقت بداية الحلقة',5); if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) throw new Fault('وقت البداية غير صالح');
+    const r=await query(`UPDATE circles SET start_time=$1 WHERE id=$2 AND ($3='system_admin' OR ($3 IN ('center_manager','supervisor') AND center_id=$4::uuid) OR ($3='teacher' AND teacher_user_id=$5::uuid)) RETURNING id,name,start_time`,[t,circleId,u.role,u.center_id,u.id]);
+    if(!r.rowCount) throw new Fault('الحلقة خارج نطاق صلاحيتك',403); return json(r.rows[0]);
   }),
   'POST /api/attendance/approve': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,staff); const b=body(ctx); const circleId=id(b.circle_id); const d=date(b.approval_date);
