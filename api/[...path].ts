@@ -653,6 +653,28 @@ const routes: Record<string, RouterMiddleware[]> = {
       await client.query('COMMIT'); return json({success:true,week_start:week,review:rs,new:ns});
     } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
   }),
+  'GET /api/rankings': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
+    const rows=(await query(`SELECT s.id,s.full_name,s.circle_id,h.name circle_name,s.center_id,
+      coalesce((SELECT avg(CASE WHEN a.status='absent' THEN 0 WHEN a.status='excused' THEN NULL WHEN coalesce(a.late_minutes,0)<=30 THEN 30 WHEN a.late_minutes<=60 THEN 20 ELSE 10 END) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5),0) attendance_avg,
+      coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date BETWEEN $4 AND $5),0) memorization_avg,
+      s.points_balance
+      FROM students s LEFT JOIN circles h ON h.id=s.circle_id WHERE ${scope.sql} AND s.status='active'`,[...scope.args,from,to])).rows;
+    const scored=rows.map((r:any)=>({...r,score:Math.round((Number(r.attendance_avg)/30*30)+(Number(r.memorization_avg)*.7))})).sort((a:any,b:any)=>b.score-a.score);
+    return json({from,to,top_center:scored.slice(0,10),top_by_circle:Object.values(scored.reduce((g:any,r:any)=>{const k=r.circle_id||'none';(g[k]??=[]).push(r);g[k]=g[k].slice(0,3);return g;},{}))});
+  }),
+  'GET /api/struggles': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const scope=studentScope(u);
+    const rows=(await query(`SELECT s.id,s.full_name,h.name circle_name,
+      count(*) FILTER(WHERE a.status='absent')::int absences,
+      coalesce(avg(m.grade),100)::numeric(5,1) avg_grade
+      FROM students s LEFT JOIN circles h ON h.id=s.circle_id
+      LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days'
+      LEFT JOIN memorization_records m ON m.student_id=s.id AND m.record_date>=current_date-interval '14 days'
+      WHERE ${scope.sql} AND s.status='active' GROUP BY s.id,h.name
+      HAVING count(*) FILTER(WHERE a.status='absent')>=2 OR coalesce(avg(m.grade),100)<70 ORDER BY absences DESC,avg_grade`,scope.args)).rows;
+    return json(rows);
+  }),
   'GET /api/reports/center': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,supervisors); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
     const centerId=u.role==='system_admin'&&ctx.query.center_id?id(ctx.query.center_id):u.center_id; if(!centerId) throw new Fault('حدد المركز');
