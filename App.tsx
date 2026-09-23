@@ -542,7 +542,7 @@ export default function App() {
                     </article>
                   ))}
                 </div>
-                {staff && <div className="panel"><h2>يحتاجون تدخلك اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setStruggles(await get('/api/struggles')))}>تحديث قائمة المتابعة</button><Table heads={['الطالب','الحلقة','الغياب خلال 14 يومًا','متوسط الأداء']} rows={struggles.map(s=>[s.full_name,s.circle_name||'—',s.absences,s.avg_grade])}/></div>}
+                {staff && <div className="panel"><h2>يحتاجون تدخلك اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setStruggles(await get('/api/struggles')))}>تحديث قائمة المتابعة</button><Table heads={['الطالب','الحلقة','الغياب خلال 14 يومًا','متوسط الأداء','سبب التنبيه']} rows={struggles.map(s=>[s.full_name,s.circle_name||'—',s.absences,s.avg_grade,(s.reasons||[]).join('، ')||'—'])}/></div>}
                 <div className="panel">
                   <p>
                     تعكس المؤشرات نطاق صلاحيات حسابك. افتح التقارير للاطلاع على
