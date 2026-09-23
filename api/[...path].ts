@@ -450,9 +450,9 @@ const routes: Record<string, RouterMiddleware[]> = {
     const centerId = await center(u, b.center_id);
     const circleId = await circle(centerId, b.circle_id);
     const phone = text(b.phone, 'رقم الجوال', 20).replace(/\s+/g, '');
-    if (!/^(?:05\d{8}|\+9665\d{8})$/.test(phone)) throw new Fault('رقم الجوال غير صالح');
-    const nationalId = text(b.national_id, 'رقم الهوية', 20).replace(/\D/g, '');
-    if (!/^\d{10}$/.test(nationalId)) throw new Fault('رقم الهوية يجب أن يتكون من 10 أرقام');
+    if (!/^(?:05\d{8}|\+9665\d{8}|\+?[1-9]\d{7,14})$/.test(phone)) throw new Fault('رقم الجوال غير صالح');
+    const nationalId = text(b.national_id, 'رقم الهوية', 30).replace(/\s+/g, '').toUpperCase();
+    if (!/^[A-Z0-9-]{5,30}$/.test(nationalId)) throw new Fault('رقم الهوية أو الوثيقة غير صالح');
     if ((await query('SELECT id FROM students WHERE national_id=$1',[nationalId])).rowCount) throw new Fault('رقم الهوية مسجل مسبقاً');
     return json(
       (
@@ -485,8 +485,12 @@ const routes: Record<string, RouterMiddleware[]> = {
     return json(
       (
         await query(
-          'UPDATE students SET full_name=$1,status=$2,center_id=$3,circle_id=$4,updated_at=now() WHERE id=$5 RETURNING *',
-          [typeof b.full_name === 'string' ? text(b.full_name, 'اسم الطالب') : s.full_name, status, targetCenter, targetCircle, s.id],
+          'UPDATE students SET full_name=$1,status=$2,center_id=$3,circle_id=$4,phone=$5,national_id=$6,birth_date=$7,grade_level=$8,updated_at=now() WHERE id=$9 RETURNING *',
+          [typeof b.full_name === 'string' ? text(b.full_name, 'اسم الطالب') : s.full_name, status, targetCenter, targetCircle,
+           typeof b.phone === 'string' ? text(b.phone,'رقم الجوال',20).replace(/\\s+/g,'') : s.phone,
+           typeof b.national_id === 'string' ? text(b.national_id,'رقم الهوية',30).replace(/\\s+/g,'').toUpperCase() : s.national_id,
+           b.birth_date ? date(b.birth_date) : s.birth_date,
+           typeof b.grade_level === 'string' ? b.grade_level.slice(0,100) : s.grade_level, s.id],
         )
       ).rows[0],
     );
@@ -531,6 +535,24 @@ const routes: Record<string, RouterMiddleware[]> = {
     const ok=(await query(`SELECT id FROM circles WHERE id=$1 AND ($2='system_admin' OR ($2 IN ('center_manager','supervisor') AND center_id=$3::uuid) OR ($2='teacher' AND teacher_user_id=$4::uuid))`,[circleId,u.role,u.center_id,u.id])).rowCount;
     if(!ok) throw new Fault('الحلقة خارج نطاق صلاحيتك',403);
     return json((await query(`INSERT INTO day_approvals(circle_id,approval_date,approved_by) VALUES($1,$2,$3) ON CONFLICT(circle_id,approval_date) DO UPDATE SET approved_by=excluded.approved_by,approved_at=now() RETURNING *`,[circleId,d,u.id])).rows[0]);
+  }),
+  'GET /api/memorization': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u);
+    return json((await query(`SELECT m.* FROM memorization_records m JOIN students s ON s.id=m.student_id WHERE ${scope.sql} ORDER BY m.record_date DESC,m.created_at DESC LIMIT 300`,scope.args)).rows);
+  }),
+  'PUT /api/memorization/:id': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const recordId=id(ctx.params.id);
+    const current=(await query('SELECT * FROM memorization_records WHERE id=$1',[recordId])).rows[0];
+    if(!current) throw new Fault('السجل غير موجود',404);
+    await student(u,current.student_id);
+    const surah=integer(b.surah_no ?? current.surah_no,1,114);
+    const counts=[7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6];
+    const from=integer(b.from_ayah ?? current.from_ayah,1,counts[surah-1]);
+    const to=integer(b.to_ayah ?? current.to_ayah,from,counts[surah-1]);
+    return json((await query(`UPDATE memorization_records SET record_type=$1,surah_no=$2,from_ayah=$3,to_ayah=$4,ayah_count=$5,grade=$6,notes=$7,record_date=$8,recorded_by=$9 WHERE id=$10 RETURNING *`,[
+      b.record_type?choice(b.record_type,['new','review']):current.record_type,surah,from,to,to-from+1,
+      b.grade==null?current.grade:integer(b.grade,0,100),typeof b.notes==='string'?b.notes.slice(0,2000):current.notes,
+      b.record_date?date(b.record_date):String(current.record_date).slice(0,10),u.id,recordId])).rows[0]);
   }),
   'POST /api/memorization': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
