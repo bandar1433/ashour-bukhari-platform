@@ -714,17 +714,20 @@ export default function App() {
             {panel === 'الحضور اليومي' && (
               <section className="panel">
                 <h2>الحضور والانصراف</h2>
+                {staff && <div className="panel"><h3>وقت بداية الحلقة</h3><p>يستخدم في احتساب التأخر تلقائيًا. ويمكن للمعلم ضبط وقت حلقته.</p>{circles.map(h=><div className="actions" key={h.id}><b>{h.name}</b><input type="time" value={form[`start_${h.id}`]||String(h.start_time||'').slice(0,5)} onChange={e=>set(`start_${h.id}`,e.target.value)}/><button disabled={busy||!form[`start_${h.id}`]} onClick={()=>run(async()=>{await api.put(`/api/circles/${h.id}/start-time`,{start_time:form[`start_${h.id}`]});await refresh(account)},'تم حفظ وقت بداية الحلقة')}>حفظ الوقت</button></div>)}</div>}
                 <Field label="تاريخ الحضور">
                   <input type="date" required value={account?.role === 'student' ? today() : day} disabled={account?.role === 'student'} onChange={(e)=>{setDay(e.target.value);setAttendance([])}} />
                 </Field>
                 <Table
-                  heads={['الطالب','الحالة','الحضور','الانصراف','الإجراءات']}
+                  heads={['الطالب','الحالة','الحضور','دقائق التأخر','درجة الحضور','الانصراف','الإجراءات']}
                   rows={students.filter((s)=>s.status==='active').map((s)=>{
                     const a=attendance.find((x)=>x.student_id===s.id);
                     return [
                       s.full_name,
                       statuses[a?.status]||'لم يسجل',
                       a?.check_in_at ? new Date(a.check_in_at).toLocaleTimeString('ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}) : '—',
+                      a?.late_minutes ?? '—',
+                      a?.attendance_score ?? (a?.status==='excused'?'مستبعد':'—'),
                       a?.check_out_at ? new Date(a.check_out_at).toLocaleTimeString('ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}) : '—',
                       <div className="actions">
                         <button disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,attendance_date:day,action:'check_in'});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تسجيل الحضور')}>حضور</button>
