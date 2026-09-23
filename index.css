@@ -1027,3 +1027,10 @@ a:focus-visible {
     margin: 14mm;
   }
 }
+
+.progressMap{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:18px 0}
+.quranState{border:1px solid #d9ddd8;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:5px;background:#fff}
+.quranState.done{border-color:#7da98b;background:#f2f8f3}
+.quranState.review{border-color:#a7a06d;background:#fbfaef}
+.quranState.weak{border-color:#b98989;background:#fff5f5}
+.quranState small{opacity:.75}
