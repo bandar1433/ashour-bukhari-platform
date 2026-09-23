@@ -147,6 +147,8 @@ export default function App() {
   const [memorization, setMemorization] = useState<Row[]>([]);
   const [day, setDay] = useState(today());
   const [report, setReport] = useState<any>(null);
+  const [dailyProgress, setDailyProgress] = useState<Row[]>([]);
+  const [weeklyPlans, setWeeklyPlans] = useState<Row[]>([]);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -330,6 +332,7 @@ export default function App() {
     'لوحة المؤشرات',
     ...(staff
       ? [
+          ...(account?.role === 'teacher' ? ['حلقتي اليوم'] : []),
           'المراكز والفروع',
           'الحلقات',
           'الخطة الأسبوعية',
@@ -579,35 +582,23 @@ export default function App() {
                 />
               </section>
             )}
+            {panel === 'حلقتي اليوم' && (
+              <section className="panel">
+                <h2>حلقتي اليوم</h2>
+                <p>متابعة سريعة للحضور والمراجعة والحفظ الجديد والدرجة اليومية من 100.</p>
+                <button className="primary" disabled={busy} onClick={()=>run(async()=>setDailyProgress(await get(`/api/daily-progress?date=${today()}`)))}>تحديث بيانات اليوم</button>
+                <Table heads={['الطالب','الحضور /30','المراجعة /40','الحفظ الجديد /30','المجموع /100']} rows={dailyProgress.map(r=>[r.full_name,r.attendance_score ?? 'مستأذن',r.review_score,r.new_score,r.total_score ?? 'مستبعد'])}/>
+              </section>
+            )}
             {panel === 'الخطة الأسبوعية' && (
               <section className="panel">
                 <h2>الخطة الأسبوعية</h2>
-                <p>يستطيع المعلم تحديث خطة حلقته، وتظهر الخطة المعتمدة مباشرة للإدارة.</p>
-                <Table
-                  heads={['الحلقة', 'المعلم', 'الخطة الأسبوعية', 'حفظ']}
-                  rows={circles.map((c) => [
-                    c.name,
-                    c.teacher_name || 'غير معين',
-                    <textarea
-                      aria-label={`الخطة الأسبوعية ${c.name}`}
-                      value={form[`plan_${c.id}`] ?? c.schedule ?? ''}
-                      onChange={(e) => set(`plan_${c.id}`, e.target.value)}
-                    />,
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        run(async () => {
-                          await api.put(`/api/circles/${c.id}`, {
-                            schedule: form[`plan_${c.id}`] ?? c.schedule ?? '',
-                          });
-                          await refresh(account);
-                        }, 'تم حفظ الخطة الأسبوعية')
-                      }
-                    >
-                      حفظ
-                    </button>,
-                  ])}
-                />
+                <p>حدد إجمالي المستهدف الأسبوعي، وتقوم المنصة بتوزيعه تلقائيًا على السبت إلى الخميس مع الاحتفاظ بالخطة السابقة.</p>
+                <form onSubmit={(e)=>{e.preventDefault();run(async()=>{await post('/api/weekly-plans',{student_id:form.student_id,week_start:form.week_start||today(),review_total:Number(form.review_total||0),new_total:Number(form.new_total||0),goals:form.goals||''});setWeeklyPlans(await get(`/api/weekly-plans?week_start=${form.week_start||today()}`))},'تم اعتماد الخطة الأسبوعية')}}>
+                  {studentPick}{input('week_start','بداية الأسبوع (السبت)','date')}{input('review_total','إجمالي المراجعة','number')}{input('new_total','إجمالي الحفظ الجديد','number')}{input('goals','أهداف وملاحظات','text',false)}{saveButton}
+                </form>
+                <button disabled={busy} onClick={()=>run(async()=>setWeeklyPlans(await get(`/api/weekly-plans?week_start=${form.week_start||today()}`)))}>عرض الخطة</button>
+                <Table heads={['الطالب','اليوم','المراجعة','الحفظ الجديد','الأهداف']} rows={weeklyPlans.map(p=>[p.full_name,p.day_name,p.review_target,p.new_target,p.goals||'—'])}/>
               </section>
             )}
             {panel === 'الطلاب' && (
