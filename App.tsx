@@ -156,6 +156,7 @@ export default function App() {
   const [publicStats, setPublicStats] = useState<any>(null);
   const [myDay, setMyDay] = useState<Row[]>([]);
   const [weeklySummary, setWeeklySummary] = useState<any>(null);
+  const [quranProgress, setQuranProgress] = useState<any>(null);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -353,7 +354,7 @@ export default function App() {
           'المكتبة',
         ]
       : account?.role === 'student' ? ['الحضور اليومي'] : []),
-    ...(account?.role === 'student' ? ['وردي اليوم'] : []),
+    ...(account?.role === 'student' ? ['وردي اليوم','رحلتي مع القرآن'] : []),
     ...(account?.role === 'guardian' ? ['متابعة الأبناء'] : []),
     'النقاط والجوائز',
     'مركز التقارير',
@@ -881,6 +882,13 @@ export default function App() {
               <section className="panel">
                 <h2>وردي اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setMyDay(await get(`/api/my-day?date=${today()}`)))}>عرض ورد اليوم</button>
                 {myDay.map(x=><article className="panel" key={x.id}><h3>{x.full_name}</h3><p>المراجعة: {x.actual_review||0} من {x.review_target||0} — الدرجة {x.review_score}/40</p><p>الحفظ الجديد: {x.actual_new||0} من {x.new_target||0} — الدرجة {x.new_score}/30</p><p>الحضور: {x.attendance_score??'مستبعد'}/30</p><h3>المجموع: {x.total_score??'مستبعد'} / 100</h3></article>)}
+              </section>
+            )}
+            {panel === 'رحلتي مع القرآن' && (
+              <section className="panel">
+                <h2>رحلتي مع القرآن</h2>
+                <button disabled={busy||!students[0]} onClick={()=>run(async()=>setQuranProgress(await get(`/api/quran-progress?student_id=${students[0].id}`)))}>عرض سجل الإنجاز</button>
+                {quranProgress&&<><h3>{quranProgress.student.full_name}</h3><div className="progressMap">{surahNames.map((name,i)=>{const rec=quranProgress.records.filter((r:Row)=>Number(r.surah_no)===i+1);const saved=rec.some((r:Row)=>r.record_type==='new');const reviewed=rec.some((r:Row)=>r.record_type==='review');const weak=rec.some((r:Row)=>Number(r.grade)<70);const state=weak?'يحتاج تثبيت':reviewed?'قيد المراجعة':saved?'محفوظ':'لم يبدأ';return <article key={name} className={`quranState ${state==='محفوظ'?'done':state==='يحتاج تثبيت'?'weak':state==='قيد المراجعة'?'review':''}`}><b>{name}</b><small>{state}</small></article>})}</div><h3>سجل الإنجاز</h3><Table heads={['التاريخ','النوع','السورة','الآيات','الدرجة']} rows={quranProgress.records.slice().reverse().map((r:Row)=>[String(r.record_date).slice(0,10),recordTypes[r.record_type],surahNames[Number(r.surah_no)-1],`${r.from_ayah}–${r.to_ayah}`,r.grade??'—'])}/></>}
               </section>
             )}
             {panel === 'متابعة الأبناء' && (
