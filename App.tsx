@@ -630,10 +630,17 @@ export default function App() {
                     {saveButton}
                   </form>
                 )}
+                {staff && form.edit_student_id && <form onSubmit={(e)=>{e.preventDefault();run(async()=>{await api.put(`/api/students/${form.edit_student_id}`,{full_name:form.edit_full_name,phone:form.edit_phone,national_id:form.edit_national_id,birth_date:form.edit_birth_date||null,grade_level:form.edit_grade_level||'',status:form.edit_status});await refresh(account);setForm({})},'تم تحديث ملف الطالب')}}>
+                  <h3>تعديل ملف الطالب</h3>
+                  {input('edit_full_name','اسم الطالب')}{input('edit_national_id','رقم الهوية/الوثيقة')}{input('edit_phone','رقم الجوال','tel')}{input('edit_birth_date','تاريخ الميلاد','date',false)}{input('edit_grade_level','المرحلة أو المستوى','text',false)}
+                  <Field label="الحالة"><select value={form.edit_status||'active'} onChange={(e)=>set('edit_status',e.target.value)}>{['active','excused','suspended'].map(v=><option key={v} value={v}>{statuses[v]}</option>)}</select></Field>{saveButton}
+                </form>}
                 <Table
-                  heads={['الطالب', 'المركز', 'الحلقة', 'الحالة', 'النقاط']}
+                  heads={['الطالب','الهوية/الوثيقة','الجوال','المركز','الحلقة','الحالة','النقاط','الملف']}
                   rows={students.map((s) => [
                     s.full_name,
+                    s.national_id || '—',
+                    s.phone || '—',
                     s.center_name,
                     staff ? (
                       <select
@@ -685,6 +692,7 @@ export default function App() {
                       statuses[s.status]
                     ),
                     s.points_balance,
+                    staff ? <button onClick={()=>setForm({edit_student_id:s.id,edit_full_name:s.full_name||'',edit_national_id:s.national_id||'',edit_phone:s.phone||'',edit_birth_date:s.birth_date?String(s.birth_date).slice(0,10):'',edit_grade_level:s.grade_level||'',edit_status:s.status||'active'})}>تعديل البيانات</button> : '—',
                   ])}
                 />
               </section>
