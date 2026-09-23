@@ -702,13 +702,13 @@ const routes: Record<string, RouterMiddleware[]> = {
   'GET /api/struggles': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,staff); const scope=studentScope(u);
     const rows=(await query(`SELECT s.id,s.full_name,h.name circle_name,
-      count(*) FILTER(WHERE a.status='absent')::int absences,
-      coalesce(avg(m.grade),100)::numeric(5,1) avg_grade
+      coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent'),0)::int absences,
+      coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)::numeric(5,1) avg_grade
       FROM students s LEFT JOIN circles h ON h.id=s.circle_id
-      LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days'
-      LEFT JOIN memorization_records m ON m.student_id=s.id AND m.record_date>=current_date-interval '14 days'
-      WHERE ${scope.sql} AND s.status='active' GROUP BY s.id,h.name
-      HAVING count(*) FILTER(WHERE a.status='absent')>=2 OR coalesce(avg(m.grade),100)<70 ORDER BY absences DESC,avg_grade`,scope.args)).rows;
+      WHERE ${scope.sql} AND s.status='active'
+      AND ((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent')>=2
+        OR coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)<70)
+      ORDER BY absences DESC,avg_grade`,scope.args)).rows;
     return json(rows);
   }),
   'GET /api/reports/center': protectedRoute(async (ctx) => {
@@ -779,10 +779,10 @@ const routes: Record<string, RouterMiddleware[]> = {
   'GET /api/weekly-summary': protectedRoute(async (ctx) => {
     const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=new Date(from+'T12:00:00');to.setDate(to.getDate()+5);const end=to.toISOString().slice(0,10);
     const rows=(await query(`SELECT s.id,s.full_name,
-      count(a.id) FILTER(WHERE a.status IN ('present','late'))::int attended,
-      count(a.id) FILTER(WHERE a.status='absent')::int absent,
-      coalesce(round(avg(m.grade))::int,0) memorization_average
-      FROM students s LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5 LEFT JOIN memorization_records m ON m.student_id=s.id AND m.record_date BETWEEN $4 AND $5 WHERE ${scope.sql} GROUP BY s.id ORDER BY s.full_name`,[...scope.args,from,end])).rows;
+      coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5 AND a.status IN ('present','late')),0)::int attended,
+      coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5 AND a.status='absent'),0)::int absent,
+      coalesce((SELECT round(avg(m.grade))::int FROM memorization_records m WHERE m.student_id=s.id AND m.record_date BETWEEN $4 AND $5),0) memorization_average
+      FROM students s WHERE ${scope.sql} ORDER BY s.full_name`,[...scope.args,from,end])).rows;
     return json({from,to:end,students:rows});
   }),
   'GET /api/reports/student/:id': protectedRoute(async (ctx) => {
