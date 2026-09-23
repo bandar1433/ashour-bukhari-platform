@@ -653,6 +653,11 @@ const routes: Record<string, RouterMiddleware[]> = {
       await client.query('COMMIT'); return json({success:true,week_start:week,review:rs,new:ns});
     } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
   }),
+  'GET /api/quran-progress': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const studentId=ctx.query.student_id; const s=await student(u,studentId);
+    const rows=(await query(`SELECT record_type,surah_no,from_ayah,to_ayah,record_date,grade FROM memorization_records WHERE student_id=$1 ORDER BY record_date,created_at`,[s.id])).rows;
+    return json({student:{id:s.id,full_name:s.full_name},records:rows});
+  }),
   'GET /api/my-day': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,['student','guardian']); const d=date(ctx.query.date||new Date().toISOString().slice(0,10)); const scope=studentScope(u);
     const week=weekStart(new Date(d+'T12:00:00')); const names=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']; const dn=names[new Date(d+'T12:00:00').getDay()];
