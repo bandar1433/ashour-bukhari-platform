@@ -149,6 +149,8 @@ export default function App() {
   const [report, setReport] = useState<any>(null);
   const [dailyProgress, setDailyProgress] = useState<Row[]>([]);
   const [weeklyPlans, setWeeklyPlans] = useState<Row[]>([]);
+  const [libraryItems, setLibraryItems] = useState<Row[]>([]);
+  const [centerReport, setCenterReport] = useState<any>(null);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -935,6 +937,28 @@ export default function App() {
                   />
                 </section>
               </>
+            )}
+            {panel === 'المكتبة' && (
+              <section className="panel">
+                <h2>المكتبة</h2>
+                <p>البرامج والسلاسل والدروس مرتبطة بالمصدر الخارجي دون تخزين الفيديو داخل المنصة.</p>
+                {['system_admin','center_manager','supervisor'].includes(account.role) && <form onSubmit={(e)=>{e.preventDefault();run(async()=>{await post('/api/library',{section_name:form.library_section,title:form.library_title,teacher_name:form.library_teacher||'',description:form.library_description||'',youtube_url:form.library_url,sort_order:Number(form.library_order||0)});setLibraryItems(await get('/api/library'));setForm({})},'تمت إضافة الدرس')}}>
+                  {input('library_section','البرنامج / السلسلة')}{input('library_title','عنوان الدرس')}{input('library_teacher','المدرس','text',false)}{input('library_url','رابط YouTube','url')}{input('library_order','ترتيب الدرس','number',false)}{input('library_description','وصف مختصر','text',false)}{saveButton}
+                </form>}
+                <button disabled={busy} onClick={()=>run(async()=>setLibraryItems(await get('/api/library')))}>عرض المكتبة</button>
+                <div className="featureGrid">{libraryItems.map(x=><article key={x.id}><small>{x.section_name}</small><h3>{x.title}</h3><p>{x.teacher_name||''}</p><p>{x.description||''}</p><a className="secondary" href={x.youtube_url} target="_blank" rel="noreferrer">فتح الدرس</a></article>)}</div>
+              </section>
+            )}
+            {panel === 'مركز التقارير' && (
+              <section className="panel report">
+                <h2>مركز التقارير</h2>
+                <div className="actions noPrint">
+                  {['system_admin','center_manager','supervisor'].includes(account.role) && <button onClick={()=>run(async()=>setCenterReport(await get(`/api/reports/center?from=${form.from||'2000-01-01'}&to=${form.to||today()}${admin&&form.center_id?`&center_id=${form.center_id}`:''}`)))}>تقرير المركز</button>}
+                  <button onClick={()=>window.print()}>طباعة / حفظ PDF</button>
+                </div>
+                <form className="noPrint">{admin&&centerPick}{input('from','من تاريخ','date',false)}{input('to','إلى تاريخ','date',false)}</form>
+                {centerReport&&<><div className="stats"><article><b>{centerReport.students}</b><span>الطلاب النشطون</span></article><article><b>{centerReport.circles}</b><span>الحلقات</span></article><article><b>{centerReport.attendance?.present||0}</b><span>حضور</span></article><article><b>{centerReport.attendance?.absent||0}</b><span>غياب</span></article></div><Table heads={['الفترة','آيات الحفظ الجديد','آيات المراجعة']} rows={[[`${centerReport.from} — ${centerReport.to}`,centerReport.memorization?.new_ayahs||0,centerReport.memorization?.review_ayahs||0]]}/></>}
+              </section>
             )}
             {panel === 'التقارير' && (
               <section className="panel report">
