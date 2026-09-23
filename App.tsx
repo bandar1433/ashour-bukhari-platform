@@ -1156,7 +1156,7 @@ export default function App() {
                 </section>
               </>
             )}
-            {panel === 'الأخبار والفعاليات' && admin && (
+            {panel === 'الأخبار والفعاليات' && ['system_admin','center_manager','supervisor'].includes(account.role) && (
               <section className="panel">
                 <form
                   onSubmit={(e) => {
@@ -1196,10 +1196,11 @@ export default function App() {
                 </form>
                 {news.map((n) => (
                   <article key={n.id}>
-                    <h3>{n.title}</h3>
-                    <p>{n.body}</p>
+                    <h3>{n.title}</h3><p>{n.body}</p>
+                    <button onClick={()=>setForm({news_id:n.id,title:n.title,body:n.body,kind:n.kind||'news'})}>تعديل</button>
                   </article>
                 ))}
+                {form.news_id&&<button className="primary" disabled={busy} onClick={()=>run(async()=>{await api.put(`/api/news/${form.news_id}`,{title:form.title,body:form.body,kind:form.kind||'news',status:'published'});setNews(await get('/api/news'));setForm({})},'تم تحديث الخبر')}>حفظ تعديل الخبر</button>}
               </section>
             )}
           </section>
