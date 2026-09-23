@@ -45,6 +45,10 @@ const today = () =>
 const get = async (path: string) => (await api.get(path)).data;
 const post = async (path: string, data: unknown) =>
   (await api.post(path, data)).data;
+function downloadCsv(filename:string, rows:(string|number|null|undefined)[][]) {
+  const csv='\uFEFF'+rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})); a.download=filename; a.click(); URL.revokeObjectURL(a.href);
+}
 function message(e: unknown) {
   const err = e as {
     response?: { data?: { message?: string; error?: string } };
@@ -147,6 +151,16 @@ export default function App() {
   const [memorization, setMemorization] = useState<Row[]>([]);
   const [day, setDay] = useState(today());
   const [report, setReport] = useState<any>(null);
+  const [dailyProgress, setDailyProgress] = useState<Row[]>([]);
+  const [weeklyPlans, setWeeklyPlans] = useState<Row[]>([]);
+  const [libraryItems, setLibraryItems] = useState<Row[]>([]);
+  const [centerReport, setCenterReport] = useState<any>(null);
+  const [rankings, setRankings] = useState<any>(null);
+  const [struggles, setStruggles] = useState<Row[]>([]);
+  const [publicStats, setPublicStats] = useState<any>(null);
+  const [myDay, setMyDay] = useState<Row[]>([]);
+  const [weeklySummary, setWeeklySummary] = useState<any>(null);
+  const [quranProgress, setQuranProgress] = useState<any>(null);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -223,7 +237,10 @@ export default function App() {
   const checkConnection = async () => {
     const s = await get('/api/status');
     setConnection(s.configured);
-    if (s.configured) setNews(await get('/api/news'));
+    if (s.configured) {
+      const [n,ps]=await Promise.all([get('/api/news'),get('/api/public-stats')]);
+      setNews(n); setPublicStats(ps);
+    }
   };
   useEffect(() => {
     checkConnection()
@@ -232,6 +249,12 @@ export default function App() {
       })
       .catch((e) => setNotice(message(e)));
   }, []);
+  useEffect(() => {
+    let current=true;
+    if(account?.role==='guardian' && panel==='متابعة الأبناء')
+      get('/api/guardian-preferences').then((p)=>{if(current)setForm(f=>({...f,guardian_frequency:p.frequency||'weekly'}));}).catch((e)=>{if(current)setNotice(message(e));});
+    return ()=>{current=false;};
+  },[account,panel]);
   useEffect(() => {
     let current = true;
     if (account && panel === 'الحضور اليومي')
@@ -330,6 +353,7 @@ export default function App() {
     'لوحة المؤشرات',
     ...(staff
       ? [
+          ...(account?.role === 'teacher' ? ['حلقتي اليوم'] : []),
           'المراكز والفروع',
           'الحلقات',
           'الخطة الأسبوعية',
@@ -337,9 +361,13 @@ export default function App() {
           'الحضور اليومي',
           'الحفظ والمراجعة',
           'المسابقات',
+          'المكتبة',
         ]
       : account?.role === 'student' ? ['الحضور اليومي'] : []),
+    ...(account?.role === 'student' ? ['وردي اليوم','رحلتي مع القرآن'] : []),
+    ...(account?.role === 'guardian' ? ['متابعة الأبناء'] : []),
     'النقاط والجوائز',
+    'مركز التقارير',
     'التقارير',
     ...(admin ? ['المستخدمون والصلاحيات', 'الأخبار والفعاليات'] : []),
   ];
@@ -430,6 +458,7 @@ export default function App() {
               </div>
             </div>
           </section>
+          {publicStats&&<section className="stats"><article><b>{publicStats.students}</b><span>طالب نشط</span></article><article><b>{publicStats.circles}</b><span>حلقة</span></article><article><b>{publicStats.centers}</b><span>مركز</span></article><article><b>{publicStats.records}</b><span>سجل إنجاز</span></article></section>}
           <section id="about" className="section">
             <h2>رحلة متصلة مع كتاب الله</h2>
             <div className="featureGrid">
@@ -486,6 +515,8 @@ export default function App() {
             <div className="panel noPrint">
               <div className="actions"><button type="button" onClick={() => navigate('لوحة المؤشرات')}>← رجوع</button><span className="eyebrow">{roles[account.role]}</span></div>
               <h1>{panel}</h1>
+              {panel === 'مركز التقارير' && <p>التقارير تنشأ آليًا بحسب صلاحية المستخدم، والأصل أسبوعي مع إمكان تغيير الفترة إلى شهري أو ربع سنوي أو نصف سنوي أو سنوي.</p>}
+              {panel === 'المكتبة' && <p>مكتبة البرامج والدروس المرتبطة بالمصادر الخارجية مثل YouTube دون تحميل ملفات الفيديو على المنصة.</p>}
             </div>
             {panel === 'لوحة المؤشرات' && (
               <>
@@ -511,6 +542,7 @@ export default function App() {
                     </article>
                   ))}
                 </div>
+                {staff && <div className="panel"><h2>يحتاجون تدخلك اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setStruggles(await get('/api/struggles')))}>تحديث قائمة المتابعة</button><Table heads={['الطالب','الحلقة','الغياب خلال 14 يومًا','متوسط الأداء']} rows={struggles.map(s=>[s.full_name,s.circle_name||'—',s.absences,s.avg_grade])}/></div>}
                 <div className="panel">
                   <p>
                     تعكس المؤشرات نطاق صلاحيات حسابك. افتح التقارير للاطلاع على
@@ -575,54 +607,42 @@ export default function App() {
                 />
               </section>
             )}
+            {panel === 'حلقتي اليوم' && (
+              <section className="panel">
+                <h2>حلقتي اليوم</h2>
+                <p>متابعة سريعة للحضور والمراجعة والحفظ الجديد والدرجة اليومية من 100.</p>
+                <button className="primary" disabled={busy} onClick={()=>run(async()=>setDailyProgress(await get(`/api/daily-progress?date=${today()}`)))}>تحديث بيانات اليوم</button>
+                <Table heads={['الطالب','الحضور /30','المراجعة /40','الحفظ الجديد /30','المجموع /100']} rows={dailyProgress.map(r=>[r.full_name,r.attendance_score ?? 'مستأذن',r.review_score,r.new_score,r.total_score ?? 'مستبعد'])}/>
+              </section>
+            )}
             {panel === 'الخطة الأسبوعية' && (
               <section className="panel">
                 <h2>الخطة الأسبوعية</h2>
-                <p>يستطيع المعلم تحديث خطة حلقته، وتظهر الخطة المعتمدة مباشرة للإدارة.</p>
-                <Table
-                  heads={['الحلقة', 'المعلم', 'الخطة الأسبوعية', 'حفظ']}
-                  rows={circles.map((c) => [
-                    c.name,
-                    c.teacher_name || 'غير معين',
-                    <textarea
-                      aria-label={`الخطة الأسبوعية ${c.name}`}
-                      value={form[`plan_${c.id}`] ?? c.schedule ?? ''}
-                      onChange={(e) => set(`plan_${c.id}`, e.target.value)}
-                    />,
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        run(async () => {
-                          await api.put(`/api/circles/${c.id}`, {
-                            schedule: form[`plan_${c.id}`] ?? c.schedule ?? '',
-                          });
-                          await refresh(account);
-                        }, 'تم حفظ الخطة الأسبوعية')
-                      }
-                    >
-                      حفظ
-                    </button>,
-                  ])}
-                />
+                <p>حدد إجمالي المستهدف الأسبوعي، وتقوم المنصة بتوزيعه تلقائيًا على السبت إلى الخميس مع الاحتفاظ بالخطة السابقة.</p>
+                <form onSubmit={(e)=>{e.preventDefault();run(async()=>{await post('/api/weekly-plans',{student_id:form.student_id,week_start:form.week_start||today(),review_total:Number(form.review_total||0),new_total:Number(form.new_total||0),goals:form.goals||''});setWeeklyPlans(await get(`/api/weekly-plans?week_start=${form.week_start||today()}`))},'تم اعتماد الخطة الأسبوعية')}}>
+                  {studentPick}{input('week_start','بداية الأسبوع (السبت)','date')}{input('review_total','إجمالي المراجعة','number')}{input('new_total','إجمالي الحفظ الجديد','number')}{input('goals','أهداف وملاحظات','text',false)}{saveButton}
+                </form>
+                <button disabled={busy} onClick={()=>run(async()=>setWeeklyPlans(await get(`/api/weekly-plans?week_start=${form.week_start||today()}`)))}>عرض الخطة</button>
+                <Table heads={['الطالب','اليوم','المراجعة','الحفظ الجديد','الأهداف']} rows={weeklyPlans.map(p=>[p.full_name,p.day_name,p.review_target,p.new_target,p.goals||'—'])}/>
               </section>
             )}
             {panel === 'الطلاب' && (
               <section className="panel">
-                {manager && (
+                {staff && (
                   <form onSubmit={submit('/api/students', form)}>
                     {input('full_name', 'اسم الطالب')}
                     {input('national_id', 'رقم الهوية', 'text')}
                     {input('phone', 'رقم الجوال', 'tel')}
                     {input('birth_date', 'تاريخ الميلاد', 'date', false)}
                     {input('grade_level', 'المرحلة أو المستوى', 'text', false)}
-                    {centerPick}
+                    {account?.role !== 'teacher' && centerPick}
                     <Field label="الحلقة">
                       <Pick
                         required={false}
-                        rows={circles.filter(
+                        rows={account?.role === 'teacher' ? circles : circles.filter(
                           (c) => c.center_id === form.center_id,
                         )}
-                        value={form.circle_id || ''}
+                        value={form.circle_id || (account?.role === 'teacher' ? circles[0]?.id || '' : '')}
                         onChange={(v) => set('circle_id', v)}
                         label="بدون حلقة"
                       />
@@ -700,17 +720,20 @@ export default function App() {
             {panel === 'الحضور اليومي' && (
               <section className="panel">
                 <h2>الحضور والانصراف</h2>
+                {staff && <div className="panel"><h3>وقت بداية الحلقة</h3><p>يستخدم في احتساب التأخر تلقائيًا. ويمكن للمعلم ضبط وقت حلقته.</p>{circles.map(h=><div className="actions" key={h.id}><b>{h.name}</b><input type="time" value={form[`start_${h.id}`]||String(h.start_time||'').slice(0,5)} onChange={e=>set(`start_${h.id}`,e.target.value)}/><button disabled={busy||!form[`start_${h.id}`]} onClick={()=>run(async()=>{await api.put(`/api/circles/${h.id}/start-time`,{start_time:form[`start_${h.id}`]});await refresh(account)},'تم حفظ وقت بداية الحلقة')}>حفظ الوقت</button></div>)}</div>}
                 <Field label="تاريخ الحضور">
                   <input type="date" required value={account?.role === 'student' ? today() : day} disabled={account?.role === 'student'} onChange={(e)=>{setDay(e.target.value);setAttendance([])}} />
                 </Field>
                 <Table
-                  heads={['الطالب','الحالة','الحضور','الانصراف','الإجراءات']}
+                  heads={['الطالب','الحالة','الحضور','دقائق التأخر','درجة الحضور','الانصراف','الإجراءات']}
                   rows={students.filter((s)=>s.status==='active').map((s)=>{
                     const a=attendance.find((x)=>x.student_id===s.id);
                     return [
                       s.full_name,
                       statuses[a?.status]||'لم يسجل',
                       a?.check_in_at ? new Date(a.check_in_at).toLocaleTimeString('ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}) : '—',
+                      a?.late_minutes ?? '—',
+                      a?.attendance_score ?? (a?.status==='excused'?'مستبعد':'—'),
                       a?.check_out_at ? new Date(a.check_out_at).toLocaleTimeString('ar-SA',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit'}) : '—',
                       <div className="actions">
                         <button disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,attendance_date:day,action:'check_in'});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تسجيل الحضور')}>حضور</button>
@@ -835,17 +858,23 @@ export default function App() {
             {panel === 'المسابقات' && (
               <section className="panel">
                 <h2>المسابقات</h2>
-                {manager && (
+                {staff && (
                   <form onSubmit={submit('/api/competitions', {
                     title: form.competition_title,
                     start_date: form.competition_start,
                     end_date: form.competition_end,
                     center_id: form.center_id || undefined,
+                    circle_id: form.competition_circle_id || undefined,
+                    max_points: Number(form.competition_max_points || 100),
                   })}>
                     {admin && centerPick}
+                    {manager && <Field label="النطاق"><select value={form.competition_scope||'center'} onChange={e=>set('competition_scope',e.target.value)}><option value="center">مسابقة المركز</option><option value="circle">مسابقة حلقة</option></select></Field>}
+                    {manager && form.competition_scope==='circle' && <Field label="الحلقة"><Pick rows={circles} value={form.competition_circle_id||''} onChange={v=>set('competition_circle_id',v)}/></Field>}
+                    {account.role==='teacher' && <p>المسابقة خاصة بحلقتك.</p>}
                     {input('competition_title','اسم المسابقة')}
                     {input('competition_start','تاريخ البداية','date')}
                     {input('competition_end','تاريخ النهاية','date')}
+                    {input('competition_max_points','نقاط المسابقة','number')}
                     {saveButton}
                   </form>
                 )}
@@ -861,13 +890,43 @@ export default function App() {
                   })}>
                     <h3>إدخال نتيجة الطالب</h3>
                     {studentPick}
-                    {input('competition_score','الدرجة من 100','number')}
+                    {input('competition_score','النتيجة','number')}
                     {input('competition_notes','ملاحظات','text',false)}
                     {saveButton}
                   </form>
                 )}
               </section>
             )}
+            {panel === 'وردي اليوم' && (
+              <section className="panel">
+                <h2>وردي اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setMyDay(await get(`/api/my-day?date=${today()}`)))}>عرض ورد اليوم</button>
+                {myDay.map(x=><article className="panel" key={x.id}><h3>{x.full_name}</h3><p>المراجعة: {x.actual_review||0} من {x.review_target||0} — الدرجة {x.review_score}/40</p><p>الحفظ الجديد: {x.actual_new||0} من {x.new_target||0} — الدرجة {x.new_score}/30</p><p>الحضور: {x.attendance_score??'مستبعد'}/30</p><h3>المجموع: {x.total_score??'مستبعد'} / 100</h3></article>)}
+              </section>
+            )}
+            {panel === 'رحلتي مع القرآن' && (
+              <section className="panel">
+                <h2>رحلتي مع القرآن</h2>
+                <button disabled={busy||!students[0]} onClick={()=>run(async()=>setQuranProgress(await get(`/api/quran-progress?student_id=${students[0].id}`)))}>عرض سجل الإنجاز</button>
+                {quranProgress&&<><h3>{quranProgress.student.full_name}</h3><div className="progressMap">{surahNames.map((name,i)=>{const rec=quranProgress.records.filter((r:Row)=>Number(r.surah_no)===i+1);const saved=rec.some((r:Row)=>r.record_type==='new');const reviewed=rec.some((r:Row)=>r.record_type==='review');const weak=rec.some((r:Row)=>Number(r.grade)<70);const state=weak?'يحتاج تثبيت':reviewed?'قيد المراجعة':saved?'محفوظ':'لم يبدأ';return <article key={name} className={`quranState ${state==='محفوظ'?'done':state==='يحتاج تثبيت'?'weak':state==='قيد المراجعة'?'review':''}`}><b>{name}</b><small>{state}</small></article>})}</div><h3>سجل الإنجاز</h3><Table heads={['التاريخ','النوع','السورة','الآيات','الدرجة']} rows={quranProgress.records.slice().reverse().map((r:Row)=>[String(r.record_date).slice(0,10),recordTypes[r.record_type],surahNames[Number(r.surah_no)-1],`${r.from_ayah}–${r.to_ayah}`,r.grade??'—'])}/></>}
+              </section>
+            )}
+            {panel === 'متابعة الأبناء' && (
+              <section className="panel">
+                <h2>متابعة الأبناء</h2><p>ملخص تلقائي للحضور ومستوى الحفظ والمراجعة.</p>
+                <Field label="دورية التقرير"><select value={form.guardian_frequency||'weekly'} onChange={e=>set('guardian_frequency',e.target.value)}><option value="weekly">أسبوعي</option><option value="monthly">شهري</option><option value="quarterly">ربع سنوي</option><option value="half_yearly">نصف سنوي</option><option value="yearly">سنوي</option></select></Field>
+                <button disabled={busy} onClick={()=>run(async()=>{await post('/api/guardian-preferences',{frequency:form.guardian_frequency||'weekly'})},'تم حفظ دورية التقرير')}>حفظ الدورية</button>
+                <button disabled={busy} onClick={()=>run(async()=>setWeeklySummary(await get('/api/weekly-summary'))}>عرض التقرير الأسبوعي</button>
+                {weeklySummary&&<><p>الفترة: {weeklySummary.from} — {weeklySummary.to}</p><Table heads={['الطالب','أيام الحضور','الغياب','متوسط الأداء']} rows={weeklySummary.students.map((x:Row)=>[x.full_name,x.attended,x.absent,x.memorization_average])}/></>}
+              </section>
+            )}
+            {panel === 'النقاط والجوائز' && (
+              <>
+                <section className="panel">
+                  <h2>الترتيب والتحفيز</h2>
+                  <button disabled={busy} onClick={()=>run(async()=>setRankings(await get('/api/rankings')))}>تحديث الترتيب</button>
+                  {rankings&&<><h3>أفضل 10 على مستوى نطاقك</h3><Table heads={['الترتيب','الطالب','الحلقة','الدرجة']} rows={rankings.top_center.map((r:Row,i:number)=>[i+1,r.full_name,r.circle_name||'—',r.score])}/><h3>أفضل 3 في كل حلقة</h3>{rankings.top_by_circle.map((group:Row[],i:number)=><Table key={i} heads={['الطالب','الحلقة','الدرجة']} rows={group.map(r=>[r.full_name,r.circle_name||'—',r.score])}/>)}</>}
+                </section>
+              </>)} 
             {panel === 'النقاط والجوائز' && (
               <>
                 <section className="panel">
@@ -941,6 +1000,32 @@ export default function App() {
                 </section>
               </>
             )}
+            {panel === 'المكتبة' && (
+              <section className="panel">
+                <h2>المكتبة</h2>
+                <p>البرامج والسلاسل والدروس مرتبطة بالمصدر الخارجي دون تخزين الفيديو داخل المنصة.</p>
+                {['system_admin','center_manager','supervisor'].includes(account.role) && <form onSubmit={(e)=>{e.preventDefault();run(async()=>{await post('/api/library',{section_name:form.library_section,title:form.library_title,teacher_name:form.library_teacher||'',description:form.library_description||'',youtube_url:form.library_url,sort_order:Number(form.library_order||0)});setLibraryItems(await get('/api/library'));setForm({})},'تمت إضافة الدرس')}}>
+                  {input('library_section','البرنامج / السلسلة')}{input('library_title','عنوان الدرس')}{input('library_teacher','المدرس','text',false)}{input('library_url','رابط YouTube','url')}{input('library_order','ترتيب الدرس','number',false)}{input('library_description','وصف مختصر','text',false)}{saveButton}
+                </form>}
+                <button disabled={busy} onClick={()=>run(async()=>setLibraryItems(await get('/api/library')))}>عرض المكتبة</button>
+                <div className="featureGrid">{libraryItems.map(x=><article key={x.id}><small>{x.section_name}</small><h3>{x.title}</h3><p>{x.teacher_name||''}</p><p>{x.description||''}</p><a className="secondary" href={x.youtube_url} target="_blank" rel="noreferrer">فتح الدرس</a></article>)}</div>
+              </section>
+            )}
+            {panel === 'مركز التقارير' && (
+              <section className="panel report">
+                <h2>مركز التقارير</h2>
+                <div className="actions noPrint">
+                  {['system_admin','center_manager','supervisor'].includes(account.role) && <button onClick={()=>run(async()=>setCenterReport(await get(`/api/reports/center?from=${form.from||'2000-01-01'}&to=${form.to||today()}${admin&&form.center_id?`&center_id=${form.center_id}`:''}`)))}>تقرير المركز</button>}
+                  <button onClick={()=>window.print()}>طباعة / حفظ PDF</button>
+                  {centerReport&&<button onClick={()=>downloadCsv('center-report.csv',[
+                    ['الفترة','الطلاب النشطون','الحلقات','الحضور','الغياب','آيات الحفظ الجديد','آيات المراجعة'],
+                    [`${centerReport.from} — ${centerReport.to}`,centerReport.students,centerReport.circles,centerReport.attendance?.present||0,centerReport.attendance?.absent||0,centerReport.memorization?.new_ayahs||0,centerReport.memorization?.review_ayahs||0]
+                  ])}>تصدير Excel / CSV</button>}
+                </div>
+                <form className="noPrint">{admin&&centerPick}{input('from','من تاريخ','date',false)}{input('to','إلى تاريخ','date',false)}</form>
+                {centerReport&&<><div className="stats"><article><b>{centerReport.students}</b><span>الطلاب النشطون</span></article><article><b>{centerReport.circles}</b><span>الحلقات</span></article><article><b>{centerReport.attendance?.present||0}</b><span>حضور</span></article><article><b>{centerReport.attendance?.absent||0}</b><span>غياب</span></article></div><Table heads={['الفترة','آيات الحفظ الجديد','آيات المراجعة']} rows={[[`${centerReport.from} — ${centerReport.to}`,centerReport.memorization?.new_ayahs||0,centerReport.memorization?.review_ayahs||0]]}/></>}
+              </section>
+            )}
             {panel === 'التقارير' && (
               <section className="panel report">
                 <form
@@ -978,6 +1063,10 @@ export default function App() {
                     >
                       طباعة / حفظ PDF
                     </button>
+                    <button className="primary noPrint" onClick={()=>downloadCsv(`student-${report.student.full_name}.csv`,[
+                      ['التاريخ','النوع','السورة','من آية','إلى آية','الدرجة','الملاحظات'],
+                      ...report.memorization.map((m:Row)=>[String(m.record_date).slice(0,10),recordTypes[m.record_type],surahNames[Number(m.surah_no)-1]||'',m.from_ayah,m.to_ayah,m.grade??'',m.notes||''])
+                    ])}>تصدير Excel / CSV</button>
                     <h3>الحضور</h3>
                     <Table
                       heads={['التاريخ', 'الحالة']}
@@ -1096,7 +1185,7 @@ export default function App() {
                 </section>
               </>
             )}
-            {panel === 'الأخبار والفعاليات' && admin && (
+            {panel === 'الأخبار والفعاليات' && ['system_admin','center_manager','supervisor'].includes(account.role) && (
               <section className="panel">
                 <form
                   onSubmit={(e) => {
@@ -1136,10 +1225,11 @@ export default function App() {
                 </form>
                 {news.map((n) => (
                   <article key={n.id}>
-                    <h3>{n.title}</h3>
-                    <p>{n.body}</p>
+                    <h3>{n.title}</h3><p>{n.body}</p>
+                    <button onClick={()=>setForm({news_id:n.id,title:n.title,body:n.body,kind:n.kind||'news'})}>تعديل</button>
                   </article>
                 ))}
+                {form.news_id&&<button className="primary" disabled={busy} onClick={()=>run(async()=>{await api.put(`/api/news/${form.news_id}`,{title:form.title,body:form.body,kind:form.kind||'news',status:'published'});setNews(await get('/api/news'));setForm({})},'تم تحديث الخبر')}>حفظ تعديل الخبر</button>}
               </section>
             )}
           </section>

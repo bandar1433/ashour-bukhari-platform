@@ -255,6 +255,26 @@ function permit(u: Actor, roles: string[]) {
 }
 const staff = ['system_admin', 'center_manager', 'supervisor', 'teacher'];
 const managers = ['system_admin', 'center_manager'];
+const supervisors = ['system_admin', 'center_manager', 'supervisor'];
+const WEEK_DAYS = ['السبت','الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس'];
+function weekStart(value = new Date()) {
+  const d = new Date(value);
+  const riyadh = new Date(d.toLocaleString('en-US',{timeZone:'Asia/Riyadh'}));
+  const day = riyadh.getDay();
+  const back = day === 6 ? 0 : day + 1;
+  riyadh.setDate(riyadh.getDate()-back);
+  return riyadh.toISOString().slice(0,10);
+}
+function attendancePoints(status:string, late:number|null|undefined) {
+  if(status==='excused') return null;
+  if(status==='absent') return 0;
+  const m=Math.max(0,Number(late||0));
+  return m<=30?30:m<=60?20:10;
+}
+function splitTarget(total:number) {
+  const base=Math.floor(total/6), rem=total%6;
+  return WEEK_DAYS.map((day,i)=>({day,target:base+(i<rem?1:0)}));
+}
 // Every protected read is constrained by the verified account and its database role.
 function studentScope(u: Actor) {
   return {
@@ -398,9 +418,16 @@ const routes: Record<string, RouterMiddleware[]> = {
   }),
   'POST /api/circles': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, managers);
+    permit(u, staff);
     const b = body(ctx);
-    const centerId = await center(u, b.center_id);
+    let centerId: string;
+    if (u.role === 'teacher') {
+      const own=(await query('SELECT center_id,id FROM circles WHERE teacher_user_id=$1 AND is_active LIMIT 1',[u.id])).rows[0];
+      if(!own) throw new Fault('لا توجد حلقة مرتبطة بحساب المعلم');
+      centerId=own.center_id;
+      if(b.circle_id && b.circle_id!==own.id) throw new Fault('يمكن للمعلم إضافة الطالب إلى حلقته فقط',403);
+      b.circle_id=own.id;
+    } else centerId = await center(u, b.center_id);
     const teacher = b.teacher_user_id ? id(b.teacher_user_id) : null;
     if (
       teacher &&
@@ -445,10 +472,17 @@ const routes: Record<string, RouterMiddleware[]> = {
   }),
   'POST /api/students': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, managers);
+    permit(u, staff);
     const b = body(ctx);
-    const centerId = await center(u, b.center_id);
-    const circleId = await circle(centerId, b.circle_id);
+    let centerId:string, circleId:string|null;
+    if(u.role==='teacher'){
+      const own=(await query('SELECT id,center_id FROM circles WHERE teacher_user_id=$1 AND is_active LIMIT 1',[u.id])).rows[0];
+      if(!own) throw new Fault('لا توجد حلقة مرتبطة بحساب المعلم',403);
+      centerId=own.center_id; circleId=own.id;
+    } else {
+      centerId=await center(u,b.center_id);
+      circleId=await circle(centerId,b.circle_id);
+    }
     const phone = text(b.phone, 'رقم الجوال', 20).replace(/\s+/g, '');
     if (!/^(?:05\d{8}|\+9665\d{8}|\+?[1-9]\d{7,14})$/.test(phone)) throw new Fault('رقم الجوال غير صالح');
     const nationalId = text(b.national_id, 'رقم الهوية', 30).replace(/\s+/g, '').toUpperCase();
@@ -469,8 +503,13 @@ const routes: Record<string, RouterMiddleware[]> = {
     permit(u, staff);
     const s = await student(u, ctx.params.id);
     const b = body(ctx);
-    if (u.role === 'teacher' && ('center_id' in b || ('circle_id' in b && b.circle_id !== s.circle_id)))
-      throw new Fault('المعلم يستطيع تعديل بيانات طلاب حلقته دون نقلهم إلى حلقة أخرى', 403);
+    if (u.role === 'teacher') {
+      if ('center_id' in b || ('circle_id' in b && b.circle_id !== s.circle_id))
+        throw new Fault('المعلم يستطيع تعديل بيانات طلاب حلقته دون نقلهم إلى حلقة أخرى', 403);
+      const created = new Date(s.created_at || s.registration_date);
+      if (Number.isFinite(created.getTime()) && Date.now()-created.getTime() > 7*24*60*60*1000)
+        throw new Fault('انتهت مدة تعديل المعلم لبيانات الطالب؛ يلزم المشرف أو مدير المركز',403);
+    }
     const targetCenter = b.center_id
       ? await center(u, b.center_id)
       : s.center_id;
@@ -482,13 +521,18 @@ const routes: Record<string, RouterMiddleware[]> = {
       'status' in b
         ? choice(b.status, ['active', 'excused', 'suspended'])
         : s.status;
+    const nextPhone=typeof b.phone==='string'?text(b.phone,'رقم الجوال',20).replace(/\s+/g,''):s.phone;
+    if(nextPhone && !/^(?:05\d{8}|\+9665\d{8}|\+?[1-9]\d{7,14})$/.test(nextPhone)) throw new Fault('رقم الجوال غير صالح');
+    const nextNationalId=typeof b.national_id==='string'?text(b.national_id,'رقم الهوية',30).replace(/\s+/g,'').toUpperCase():s.national_id;
+    if(nextNationalId && !/^[A-Z0-9-]{5,30}$/.test(nextNationalId)) throw new Fault('رقم الهوية أو الوثيقة غير صالح');
+    if(nextNationalId && (await query('SELECT id FROM students WHERE national_id=$1 AND id<>$2',[nextNationalId,s.id])).rowCount) throw new Fault('رقم الهوية مسجل مسبقاً');
     return json(
       (
         await query(
           'UPDATE students SET full_name=$1,status=$2,center_id=$3,circle_id=$4,phone=$5,national_id=$6,birth_date=$7,grade_level=$8,updated_at=now() WHERE id=$9 RETURNING *',
           [typeof b.full_name === 'string' ? text(b.full_name, 'اسم الطالب') : s.full_name, status, targetCenter, targetCircle,
-           typeof b.phone === 'string' ? text(b.phone,'رقم الجوال',20).replace(/\\s+/g,'') : s.phone,
-           typeof b.national_id === 'string' ? text(b.national_id,'رقم الهوية',30).replace(/\\s+/g,'').toUpperCase() : s.national_id,
+           nextPhone,
+           nextNationalId,
            b.birth_date ? date(b.birth_date) : s.birth_date,
            typeof b.grade_level === 'string' ? b.grade_level.slice(0,100) : s.grade_level, s.id],
         )
@@ -501,7 +545,7 @@ const routes: Record<string, RouterMiddleware[]> = {
     return json(
       (
         await query(
-          `SELECT a.* FROM attendance a JOIN students s ON s.id=a.student_id WHERE ${scope.sql} AND a.attendance_date=$4`,
+          `SELECT a.*,CASE WHEN a.status='excused' THEN NULL WHEN a.status='absent' THEN 0 WHEN coalesce(a.late_minutes,0)<=30 THEN 30 WHEN a.late_minutes<=60 THEN 20 ELSE 10 END attendance_score FROM attendance a JOIN students s ON s.id=a.student_id WHERE ${scope.sql} AND a.attendance_date=$4`,
           [...scope.args, date(ctx.query.date)],
         )
       ).rows,
@@ -516,10 +560,14 @@ const routes: Record<string, RouterMiddleware[]> = {
     if(!staff.includes(u.role)&&u.role!=='student') throw new Fault('ليست لديك صلاحية لهذه العملية',403);
     const action=typeof b.action==='string'?b.action:'status';
     if(u.role==='student'&&!['check_in','check_out'].includes(action)) throw new Fault('الطالب يستطيع تسجيل الحضور والانصراف فقط',403);
-    if(action==='check_in') return json((await query(
-      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by,check_in_at) VALUES($1,$2,$3,'present',$4,now())
-       ON CONFLICT(student_id,attendance_date) DO UPDATE SET check_in_at=COALESCE(attendance.check_in_at,now()),recorded_by=excluded.recorded_by RETURNING *`,
-      [s.id,s.circle_id,d,u.id])).rows[0]);
+    if(action==='check_in') {
+      const circle=(await query('SELECT start_time FROM circles WHERE id=$1',[s.circle_id])).rows[0];
+      let late=0; if(circle?.start_time){const now=new Date();const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Riyadh',hour:'2-digit',minute:'2-digit',hour12:false}).format(now).split(':');const cur=Number(parts[0])*60+Number(parts[1]);const st=String(circle.start_time).slice(0,5).split(':');late=Math.max(0,cur-(Number(st[0])*60+Number(st[1])));}
+      const status=late>30?'late':'present';
+      return json((await query(
+      `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by,check_in_at,late_minutes) VALUES($1,$2,$3,$4,$5,now(),$6)
+       ON CONFLICT(student_id,attendance_date) DO UPDATE SET check_in_at=COALESCE(attendance.check_in_at,now()),status=CASE WHEN attendance.check_in_at IS NULL THEN excluded.status ELSE attendance.status END,late_minutes=CASE WHEN attendance.check_in_at IS NULL THEN excluded.late_minutes ELSE attendance.late_minutes END,recorded_by=excluded.recorded_by RETURNING *`,
+      [s.id,s.circle_id,d,status,u.id,late])).rows[0]); }
     if(action==='check_out'){
       const row=(await query(`UPDATE attendance SET check_out_at=now(),recorded_by=$1 WHERE student_id=$2 AND attendance_date=$3 AND check_in_at IS NOT NULL RETURNING *`,[u.id,s.id,d])).rows[0];
       if(!row) throw new Fault('يلزم تسجيل الحضور أولاً'); return json(row);
@@ -529,6 +577,12 @@ const routes: Record<string, RouterMiddleware[]> = {
       `INSERT INTO attendance(student_id,circle_id,attendance_date,status,recorded_by) VALUES($1,$2,$3,$4,$5)
        ON CONFLICT(student_id,attendance_date) DO UPDATE SET status=excluded.status,recorded_by=excluded.recorded_by RETURNING *`,
       [s.id,s.circle_id,d,choice(b.status,['present','late','absent','excused']),u.id])).rows[0]);
+  }),
+  'PUT /api/circles/:id/start-time': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const circleId=id(ctx.params.id); const b=body(ctx);
+    const t=text(b.start_time,'وقت بداية الحلقة',5); if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) throw new Fault('وقت البداية غير صالح');
+    const r=await query(`UPDATE circles SET start_time=$1 WHERE id=$2 AND ($3='system_admin' OR ($3 IN ('center_manager','supervisor') AND center_id=$4::uuid) OR ($3='teacher' AND teacher_user_id=$5::uuid)) RETURNING id,name,start_time`,[t,circleId,u.role,u.center_id,u.id]);
+    if(!r.rowCount) throw new Fault('الحلقة خارج نطاق صلاحيتك',403); return json(r.rows[0]);
   }),
   'POST /api/attendance/approve': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,staff); const b=body(ctx); const circleId=id(b.circle_id); const d=date(b.approval_date);
@@ -596,18 +650,113 @@ const routes: Record<string, RouterMiddleware[]> = {
       201,
     );
   }),
+  'GET /api/daily-progress': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const d=date(ctx.query.date || new Date().toISOString().slice(0,10)); const scope=studentScope(u);
+    const week=weekStart(new Date(d+'T12:00:00')); const dayNames=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']; const dn=dayNames[new Date(d+'T12:00:00').getDay()];
+    const rows=(await query(`SELECT s.id,s.full_name,s.circle_id,wp.new_target,wp.review_target,a.status,a.late_minutes,
+      coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=$5 AND m.record_type='new'),0)::int actual_new,
+      coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=$5 AND m.record_type='review'),0)::int actual_review
+      FROM students s LEFT JOIN weekly_plans wp ON wp.student_id=s.id AND wp.week_start=$4 AND wp.day_name=$6
+      LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date=$5 WHERE ${scope.sql} AND s.status='active' ORDER BY s.full_name`,[...scope.args,week,d,dn])).rows;
+    return json(rows.map((r:any)=>{const nt=Number(r.new_target||0),rt=Number(r.review_target||0);const ap=attendancePoints(r.status,r.late_minutes);const review=rt?Math.min(40,Math.round(Number(r.actual_review||0)/rt*40)):40;const fresh=nt?Math.min(30,Math.round(Number(r.actual_new||0)/nt*30)):30;return {...r,attendance_score:ap,review_score:review,new_score:fresh,total_score:ap==null?null:ap+review+fresh};}));
+  }),
+  'GET /api/weekly-plans': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u);
+    const week=date(ctx.query.week_start || weekStart());
+    return json((await query(`SELECT wp.*,s.full_name FROM weekly_plans wp JOIN students s ON s.id=wp.student_id WHERE ${scope.sql} AND wp.week_start=$4 ORDER BY s.full_name,wp.day_name`,[...scope.args,week])).rows);
+  }),
+  'POST /api/weekly-plans': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const s=await student(u,b.student_id);
+    const week=date(b.week_start || weekStart()); const review=integer(b.review_total ?? 0,0,604); const fresh=integer(b.new_total ?? 0,0,604);
+    const rs=splitTarget(review), ns=splitTarget(fresh);
+    const client=await (await database()).connect();
+    try { await client.query('BEGIN');
+      for(let i=0;i<6;i++) await client.query(`INSERT INTO weekly_plans(student_id,week_start,day_name,new_target,review_target,goals,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(student_id,week_start,day_name) DO UPDATE SET new_target=excluded.new_target,review_target=excluded.review_target,goals=excluded.goals,created_by=excluded.created_by`,[s.id,week,WEEK_DAYS[i],String(ns[i].target),String(rs[i].target),typeof b.goals==='string'?b.goals.slice(0,2000):null,u.id]);
+      await client.query('COMMIT'); return json({success:true,week_start:week,review:rs,new:ns});
+    } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
+  }),
+  'GET /api/quran-progress': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const studentId=ctx.query.student_id; const s=await student(u,studentId);
+    const rows=(await query(`SELECT record_type,surah_no,from_ayah,to_ayah,record_date,grade FROM memorization_records WHERE student_id=$1 ORDER BY record_date,created_at`,[s.id])).rows;
+    return json({student:{id:s.id,full_name:s.full_name},records:rows});
+  }),
+  'GET /api/my-day': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,['student','guardian']); const d=date(ctx.query.date||new Date().toISOString().slice(0,10)); const scope=studentScope(u);
+    const week=weekStart(new Date(d+'T12:00:00')); const names=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']; const dn=names[new Date(d+'T12:00:00').getDay()];
+    const rows=(await query(`SELECT s.id,s.full_name,h.name circle_name,wp.new_target,wp.review_target,a.status,a.late_minutes,
+      coalesce((SELECT sum(ayah_count) FROM memorization_records WHERE student_id=s.id AND record_date=$5 AND record_type='new'),0)::int actual_new,
+      coalesce((SELECT sum(ayah_count) FROM memorization_records WHERE student_id=s.id AND record_date=$5 AND record_type='review'),0)::int actual_review
+      FROM students s LEFT JOIN circles h ON h.id=s.circle_id LEFT JOIN weekly_plans wp ON wp.student_id=s.id AND wp.week_start=$4 AND wp.day_name=$6 LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date=$5 WHERE ${scope.sql}`,[...scope.args,week,d,dn])).rows;
+    return json(rows.map((r:any)=>{const nt=Number(r.new_target||0),rt=Number(r.review_target||0),ap=attendancePoints(r.status,r.late_minutes),rv=rt?Math.min(40,Math.round(r.actual_review/rt*40)):40,nw=nt?Math.min(30,Math.round(r.actual_new/nt*30)):30;return {...r,attendance_score:ap,review_score:rv,new_score:nw,total_score:ap==null?null:ap+rv+nw};}));
+  }),
+  'GET /api/rankings': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
+    const rows=(await query(`SELECT s.id,s.full_name,s.circle_id,h.name circle_name,s.center_id,
+      coalesce((SELECT avg(CASE WHEN a.status='absent' THEN 0 WHEN a.status='excused' THEN NULL WHEN coalesce(a.late_minutes,0)<=30 THEN 30 WHEN a.late_minutes<=60 THEN 20 ELSE 10 END) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5),0) attendance_avg,
+      coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date BETWEEN $4 AND $5),0) memorization_avg,
+      s.points_balance
+      FROM students s LEFT JOIN circles h ON h.id=s.circle_id WHERE ${scope.sql} AND s.status='active'`,[...scope.args,from,to])).rows;
+    const scored=rows.map((r:any)=>({...r,score:Math.round((Number(r.attendance_avg)/30*30)+(Number(r.memorization_avg)*.7))})).sort((a:any,b:any)=>b.score-a.score);
+    return json({from,to,top_center:scored.slice(0,10),top_by_circle:Object.values(scored.reduce((g:any,r:any)=>{const k=r.circle_id||'none';(g[k]??=[]).push(r);g[k]=g[k].slice(0,3);return g;},{}))});
+  }),
+  'GET /api/struggles': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const scope=studentScope(u);
+    const rows=(await query(`SELECT s.id,s.full_name,h.name circle_name,
+      coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent'),0)::int absences,
+      coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)::numeric(5,1) avg_grade,
+      coalesce((SELECT count(*) FROM weekly_plans wp WHERE wp.student_id=s.id AND wp.week_start>=current_date-interval '14 days' AND
+        ((coalesce(wp.review_target::numeric,0)>0 AND coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=wp.week_start + CASE wp.day_name WHEN 'السبت' THEN 0 WHEN 'الأحد' THEN 1 WHEN 'الاثنين' THEN 2 WHEN 'الثلاثاء' THEN 3 WHEN 'الأربعاء' THEN 4 WHEN 'الخميس' THEN 5 END AND m.record_type='review'),0)<wp.review_target::numeric)
+        OR (coalesce(wp.new_target::numeric,0)>0 AND coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=wp.week_start + CASE wp.day_name WHEN 'السبت' THEN 0 WHEN 'الأحد' THEN 1 WHEN 'الاثنين' THEN 2 WHEN 'الثلاثاء' THEN 3 WHEN 'الأربعاء' THEN 4 WHEN 'الخميس' THEN 5 END AND m.record_type='new'),0)<wp.new_target::numeric))),0)::int missed_targets,
+      coalesce((SELECT count(*) FROM generate_series(current_date-interval '13 days',current_date,interval '1 day') d WHERE extract(dow from d)<>5 AND NOT EXISTS(SELECT 1 FROM memorization_records m WHERE m.student_id=s.id AND m.record_type='review' AND m.record_date=d::date)),0)::int review_gaps
+      FROM students s LEFT JOIN circles h ON h.id=s.circle_id
+      WHERE ${scope.sql} AND s.status='active'
+      AND ((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent')>=2
+        OR coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)<70
+        OR (SELECT count(*) FROM weekly_plans wp WHERE wp.student_id=s.id AND wp.week_start>=current_date-interval '14 days' AND coalesce(wp.review_target::numeric,0)+coalesce(wp.new_target::numeric,0)>0)>=2)
+      ORDER BY absences DESC,avg_grade`,scope.args)).rows;
+    return json(rows.map((r:any)=>({...r,reasons:[
+      Number(r.absences)>=2?`غياب متكرر (${r.absences})`:null,
+      Number(r.avg_grade)<70?`متوسط منخفض (${r.avg_grade})`:null,
+      Number(r.missed_targets)>=2?`عدم تحقيق الورد (${r.missed_targets})`:null,
+      Number(r.review_gaps)>=3?`انقطاع عن المراجعة (${r.review_gaps} أيام)`:null
+    ].filter(Boolean)})));
+  }),
+  'GET /api/reports/center': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
+    const centerId=u.role==='system_admin'&&ctx.query.center_id?id(ctx.query.center_id):u.center_id; if(!centerId) throw new Fault('حدد المركز');
+    const [students,circles,attendance,memorization]=await Promise.all([
+      query('SELECT count(*)::int value FROM students WHERE center_id=$1 AND status=\'active\'',[centerId]),
+      query('SELECT count(*)::int value FROM circles WHERE center_id=$1 AND is_active',[centerId]),
+      query(`SELECT count(*)::int total,count(*) FILTER(WHERE a.status IN ('present','late'))::int present,count(*) FILTER(WHERE a.status='absent')::int absent FROM attendance a JOIN students s ON s.id=a.student_id WHERE s.center_id=$1 AND a.attendance_date BETWEEN $2 AND $3`,[centerId,from,to]),
+      query(`SELECT coalesce(sum(ayah_count) FILTER(WHERE record_type='new'),0)::int new_ayahs,coalesce(sum(ayah_count) FILTER(WHERE record_type='review'),0)::int review_ayahs FROM memorization_records m JOIN students s ON s.id=m.student_id WHERE s.center_id=$1 AND m.record_date BETWEEN $2 AND $3`,[centerId,from,to])
+    ]);
+    return json({from,to,students:students.rows[0].value,circles:circles.rows[0].value,attendance:attendance.rows[0],memorization:memorization.rows[0]});
+  }),
+  'GET /api/library': protectedRoute(async (ctx) => {
+    await actor(ctx);
+    return json((await query('SELECT * FROM library_items WHERE is_active ORDER BY section_name,sort_order,title')).rows);
+  }),
+  'POST /api/library': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
+    const url=text(b.youtube_url,'رابط يوتيوب',1000); if(!/^https:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) throw new Fault('أدخل رابط يوتيوب صالحاً');
+    return json((await query('INSERT INTO library_items(section_name,title,teacher_name,description,youtube_url,sort_order,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[text(b.section_name,'القسم'),text(b.title,'عنوان الدرس'),typeof b.teacher_name==='string'?b.teacher_name.slice(0,200):null,typeof b.description==='string'?b.description.slice(0,2000):null,url,Number(b.sort_order)||0,u.id])).rows[0],201);
+  }),
   'GET /api/competitions': protectedRoute(async (ctx) => {
     const u=await actor(ctx);
+    if(u.role==='teacher') return json((await query(`SELECT c.* FROM competitions c JOIN circles h ON h.id=c.circle_id WHERE h.teacher_user_id=$1 ORDER BY c.start_date DESC`,[u.id])).rows);
     return json((await query(`SELECT * FROM competitions WHERE center_id IS NULL OR $1='system_admin' OR center_id=$2::uuid ORDER BY start_date DESC`,[u.role,u.center_id])).rows);
   }),
   'POST /api/competitions': protectedRoute(async (ctx) => {
-    const u=await actor(ctx); permit(u,managers); const b=body(ctx);
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx);
     const centerId=u.role==='system_admin'&&b.center_id?await center(u,b.center_id):u.center_id;
-    return json((await query(`INSERT INTO competitions(center_id,title,start_date,end_date,status,created_by) VALUES($1,$2,$3,$4,'active',$5) RETURNING *`,[centerId,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),u.id])).rows[0],201);
+    let circleId:string|null=null, scope='center';
+    if(u.role==='teacher'){const own=(await query('SELECT id FROM circles WHERE teacher_user_id=$1 AND is_active',[u.id])).rows[0];if(!own) throw new Fault('لا توجد حلقة مرتبطة بحساب المعلم',403);circleId=own.id;scope='circle';}
+    else if(b.circle_id){const h=(await query('SELECT id FROM circles WHERE id=$1 AND ($2=\'system_admin\' OR center_id=$3::uuid)',[id(b.circle_id),u.role,u.center_id])).rows[0];if(!h) throw new Fault('الحلقة خارج نطاق صلاحيتك',403);circleId=h.id;scope='circle';}
+    return json((await query(`INSERT INTO competitions(center_id,circle_id,scope,title,start_date,end_date,status,max_points,created_by) VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8) RETURNING *`,[centerId,circleId,scope,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),integer(b.max_points??100,1,10000),u.id])).rows[0],201);
   }),
   'POST /api/competitions/:id/score': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,staff); const b=body(ctx); const s=await student(u,b.student_id); const competitionId=id(ctx.params.id);
-    const comp=(await query(`SELECT id FROM competitions WHERE id=$1 AND (center_id IS NULL OR $2='system_admin' OR center_id=$3::uuid)`,[competitionId,u.role,u.center_id])).rows[0];
+    const comp=(await query(`SELECT c.id,c.circle_id FROM competitions c LEFT JOIN circles h ON h.id=c.circle_id WHERE c.id=$1 AND (c.center_id IS NULL OR $2='system_admin' OR ($2 IN ('center_manager','supervisor') AND c.center_id=$3::uuid) OR ($2='teacher' AND h.teacher_user_id=$4::uuid))`,[competitionId,u.role,u.center_id,u.id])).rows[0];
     if(!comp) throw new Fault('المسابقة خارج نطاق صلاحيتك',404);
     return json((await query(`INSERT INTO competition_entries(competition_id,student_id,score,notes,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(competition_id,student_id) DO UPDATE SET score=excluded.score,notes=excluded.notes,updated_by=excluded.updated_by,updated_at=now() RETURNING *`,[competitionId,s.id,integer(b.score,0,100),typeof b.notes==='string'?b.notes.slice(0,1000):null,u.id])).rows[0]);
   }),
@@ -626,6 +775,25 @@ const routes: Record<string, RouterMiddleware[]> = {
     );
     if (!r.rowCount) throw new Fault('الرصيد غير كافٍ لخصم النقاط');
     return json(r.rows[0]);
+  }),
+  'GET /api/guardian-preferences': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,['guardian']);
+    const row=(await query(`SELECT coalesce(p.frequency,'weekly') frequency FROM guardians g LEFT JOIN guardian_report_preferences p ON p.guardian_id=g.id WHERE g.user_id=$1`,[u.id])).rows[0];
+    return json(row||{frequency:'weekly'});
+  }),
+  'POST /api/guardian-preferences': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,['guardian']); const b=body(ctx); const frequency=choice(b.frequency,['weekly','monthly','quarterly','half_yearly','yearly']);
+    const g=(await query('SELECT id FROM guardians WHERE user_id=$1',[u.id])).rows[0]; if(!g) throw new Fault('حساب ولي الأمر غير مرتبط',404);
+    return json((await query(`INSERT INTO guardian_report_preferences(guardian_id,frequency) VALUES($1,$2) ON CONFLICT(guardian_id) DO UPDATE SET frequency=excluded.frequency,updated_at=now() RETURNING frequency`,[g.id,frequency])).rows[0]);
+  }),
+  'GET /api/weekly-summary': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=new Date(from+'T12:00:00');to.setDate(to.getDate()+5);const end=to.toISOString().slice(0,10);
+    const rows=(await query(`SELECT s.id,s.full_name,
+      coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5 AND a.status IN ('present','late')),0)::int attended,
+      coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date BETWEEN $4 AND $5 AND a.status='absent'),0)::int absent,
+      coalesce((SELECT round(avg(m.grade))::int FROM memorization_records m WHERE m.student_id=s.id AND m.record_date BETWEEN $4 AND $5),0) memorization_average
+      FROM students s WHERE ${scope.sql} ORDER BY s.full_name`,[...scope.args,from,end])).rows;
+    return json({from,to:end,students:rows});
   }),
   'GET /api/reports/student/:id': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
@@ -732,6 +900,17 @@ const routes: Record<string, RouterMiddleware[]> = {
     else throw new Fault('اختر حساب طالب أو ولي أمر');
     return json({ success: true });
   }),
+  'GET /api/public-stats': [
+    wrap(async () => {
+      const [centers,circles,students,records]=await Promise.all([
+        query("SELECT count(*)::int value FROM centers WHERE is_active"),
+        query("SELECT count(*)::int value FROM circles WHERE is_active"),
+        query("SELECT count(*)::int value FROM students WHERE status='active'"),
+        query("SELECT count(*)::int value FROM memorization_records")
+      ]);
+      return json({centers:centers.rows[0].value,circles:circles.rows[0].value,students:students.rows[0].value,records:records.rows[0].value});
+    })
+  ],
   'GET /api/news': [
     wrap(async () =>
       json(
@@ -743,9 +922,16 @@ const routes: Record<string, RouterMiddleware[]> = {
       ),
     ),
   ],
-  'POST /api/news': adminRoute(async (ctx) => {
+  'PUT /api/news/:id': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
+    const title=text(b.title,'العنوان'), newsBody=text(b.body,'النص',10000), kind=choice(b.kind,['news','event','achievement']);
+    const status=choice(b.status||'published',['published','hidden']);
+    const r=await query(`UPDATE news_events SET title=$1,body=$2,kind=$3,status=$4,published_at=CASE WHEN $4='published' THEN coalesce(published_at,now()) ELSE published_at END WHERE id=$5 RETURNING id,title,body,kind,status,published_at`,[title,newsBody,kind,status,id(ctx.params.id)]);
+    if(!r.rowCount) throw new Fault('الخبر غير موجود',404); return json(r.rows[0]);
+  }),
+  'POST /api/news': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, ['system_admin']);
+    permit(u, supervisors);
     const b = body(ctx);
     return json(
       (
