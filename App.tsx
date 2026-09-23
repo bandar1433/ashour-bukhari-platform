@@ -250,6 +250,12 @@ export default function App() {
       .catch((e) => setNotice(message(e)));
   }, []);
   useEffect(() => {
+    let current=true;
+    if(account?.role==='guardian' && panel==='متابعة الأبناء')
+      get('/api/guardian-preferences').then((p)=>{if(current)setForm(f=>({...f,guardian_frequency:p.frequency||'weekly'}));}).catch((e)=>{if(current)setNotice(message(e));});
+    return ()=>{current=false;};
+  },[account,panel]);
+  useEffect(() => {
     let current = true;
     if (account && panel === 'الحضور اليومي')
       get(`/api/attendance?date=${day}`)
