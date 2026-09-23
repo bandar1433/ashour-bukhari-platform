@@ -412,9 +412,16 @@ const routes: Record<string, RouterMiddleware[]> = {
   }),
   'POST /api/circles': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, managers);
+    permit(u, staff);
     const b = body(ctx);
-    const centerId = await center(u, b.center_id);
+    let centerId: string;
+    if (u.role === 'teacher') {
+      const own=(await query('SELECT center_id,id FROM circles WHERE teacher_user_id=$1 AND is_active LIMIT 1',[u.id])).rows[0];
+      if(!own) throw new Fault('لا توجد حلقة مرتبطة بحساب المعلم');
+      centerId=own.center_id;
+      if(b.circle_id && b.circle_id!==own.id) throw new Fault('يمكن للمعلم إضافة الطالب إلى حلقته فقط',403);
+      b.circle_id=own.id;
+    } else centerId = await center(u, b.center_id);
     const teacher = b.teacher_user_id ? id(b.teacher_user_id) : null;
     if (
       teacher &&
@@ -483,8 +490,13 @@ const routes: Record<string, RouterMiddleware[]> = {
     permit(u, staff);
     const s = await student(u, ctx.params.id);
     const b = body(ctx);
-    if (u.role === 'teacher' && ('center_id' in b || ('circle_id' in b && b.circle_id !== s.circle_id)))
-      throw new Fault('المعلم يستطيع تعديل بيانات طلاب حلقته دون نقلهم إلى حلقة أخرى', 403);
+    if (u.role === 'teacher') {
+      if ('center_id' in b || ('circle_id' in b && b.circle_id !== s.circle_id))
+        throw new Fault('المعلم يستطيع تعديل بيانات طلاب حلقته دون نقلهم إلى حلقة أخرى', 403);
+      const created = new Date(s.created_at || s.registration_date);
+      if (Number.isFinite(created.getTime()) && Date.now()-created.getTime() > 7*24*60*60*1000)
+        throw new Fault('انتهت مدة تعديل المعلم لبيانات الطالب؛ يلزم المشرف أو مدير المركز',403);
+    }
     const targetCenter = b.center_id
       ? await center(u, b.center_id)
       : s.center_id;
@@ -501,8 +513,8 @@ const routes: Record<string, RouterMiddleware[]> = {
         await query(
           'UPDATE students SET full_name=$1,status=$2,center_id=$3,circle_id=$4,phone=$5,national_id=$6,birth_date=$7,grade_level=$8,updated_at=now() WHERE id=$9 RETURNING *',
           [typeof b.full_name === 'string' ? text(b.full_name, 'اسم الطالب') : s.full_name, status, targetCenter, targetCircle,
-           typeof b.phone === 'string' ? text(b.phone,'رقم الجوال',20).replace(/\\s+/g,'') : s.phone,
-           typeof b.national_id === 'string' ? text(b.national_id,'رقم الهوية',30).replace(/\\s+/g,'').toUpperCase() : s.national_id,
+           typeof b.phone === 'string' ? text(b.phone,'رقم الجوال',20).replace(/\s+/g,'') : s.phone,
+           typeof b.national_id === 'string' ? text(b.national_id,'رقم الهوية',30).replace(/\s+/g,'').toUpperCase() : s.national_id,
            b.birth_date ? date(b.birth_date) : s.birth_date,
            typeof b.grade_level === 'string' ? b.grade_level.slice(0,100) : s.grade_level, s.id],
         )
