@@ -33,6 +33,3 @@ CREATE TABLE IF NOT EXISTS guardian_report_preferences (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_weekly_plans_student_week ON weekly_plans(student_id,week_start);
-CREATE INDEX IF NOT EXISTS idx_attendance_student_date ON attendance(student_id,attendance_date);
-CREATE INDEX IF NOT EXISTS idx_memorization_student_date ON memorization_records(student_id,record_date);
