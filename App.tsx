@@ -144,6 +144,7 @@ export default function App() {
   const [competitions, setCompetitions] = useState<Row[]>([]);
   const [form, setForm] = useState<Record<string, string>>({});
   const [attendance, setAttendance] = useState<Row[]>([]);
+  const [memorization, setMemorization] = useState<Row[]>([]);
   const [day, setDay] = useState(today());
   const [report, setReport] = useState<any>(null);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
@@ -190,6 +191,7 @@ export default function App() {
     setUsers(u);
     setRewards(r);
     if (isStaff) setCompetitions(await get('/api/competitions'));
+    if (isStaff) setMemorization(await get('/api/memorization'));
   };
   const loadSession = async () => {
     const identity = await auth.getUser();
@@ -336,7 +338,7 @@ export default function App() {
           'الحفظ والمراجعة',
           'المسابقات',
         ]
-      : []),
+      : account?.role === 'student' ? ['الحضور اليومي'] : []),
     'النقاط والجوائز',
     'التقارير',
     ...(admin ? ['المستخدمون والصلاحيات', 'الأخبار والفعاليات'] : []),
@@ -637,7 +639,7 @@ export default function App() {
                       <select
                         aria-label={`حلقة ${s.full_name}`}
                         value={s.circle_id || ''}
-                        disabled={busy}
+                        disabled={busy || account?.role === 'teacher'}
                         onChange={(e) =>
                           run(async () => {
                             await api.put(`/api/students/${s.id}`, {
@@ -691,7 +693,7 @@ export default function App() {
               <section className="panel">
                 <h2>الحضور والانصراف</h2>
                 <Field label="تاريخ الحضور">
-                  <input type="date" required value={day} onChange={(e)=>{setDay(e.target.value);setAttendance([])}} />
+                  <input type="date" required value={account?.role === 'student' ? today() : day} disabled={account?.role === 'student'} onChange={(e)=>{setDay(e.target.value);setAttendance([])}} />
                 </Field>
                 <Table
                   heads={['الطالب','الحالة','الحضور','الانصراف','الإجراءات']}
@@ -705,15 +707,14 @@ export default function App() {
                       <div className="actions">
                         <button disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,attendance_date:day,action:'check_in'});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تسجيل الحضور')}>حضور</button>
                         <button disabled={busy||!a?.check_in_at} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,attendance_date:day,action:'check_out'});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تسجيل الانصراف')}>انصراف</button>
-                        {['present','late','absent','excused'].map((v)=><button key={v} disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,status:v,attendance_date:day});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تحديث الحالة')}>{statuses[v]}</button>)}
+                        {staff && ['present','late','absent','excused'].map((v)=><button key={v} disabled={busy||!s.circle_id} onClick={()=>run(async()=>{await post('/api/attendance',{student_id:s.id,status:v,attendance_date:day});setAttendance(await get(`/api/attendance?date=${day}`))},'تم تحديث الحالة')}>{statuses[v]}</button>)}
                       </div>
                     ];
                   })}
                 />
-                <h3>اعتماد اليوم</h3>
-                <div className="actions">
+                {staff && <><h3>اعتماد اليوم</h3><div className="actions">
                   {circles.map((h)=><button key={h.id} disabled={busy} onClick={()=>run(async()=>{await post('/api/attendance/approve',{circle_id:h.id,approval_date:day})},`تم اعتماد حضور ${h.name} ليوم ${day}`)}>اعتماد {h.name}</button>)}
-                </div>
+                </div></>}
               </section>
             )}
             {panel === 'الحفظ والمراجعة' && (
@@ -814,10 +815,13 @@ export default function App() {
                   </Field>
                   {saveButton}
                 </form>
-                <p>
-                  يمكن مراجعة السجلات المحفوظة من قسم التقارير. أرقام الآيات وفق
-                  العد الكوفي في مصحف حفص.
-                </p>
+                <h3>السجلات السابقة</h3>
+                <Table heads={['الطالب','النوع','السورة','الآيات','الدرجة','تعديل']} rows={memorization.map((m)=>[
+                  students.find((s)=>s.id===m.student_id)?.full_name || '—', recordTypes[m.record_type], surahNames[Number(m.surah_no)-1] || '—', `${m.from_ayah}–${m.to_ayah}`, m.grade ?? '—',
+                  <button onClick={()=>setForm({student_id:m.student_id,record_id:m.id,record_type:m.record_type,surah_no:String(m.surah_no),from_ayah:String(m.from_ayah),to_ayah:String(m.to_ayah),grade:m.grade==null?'':String(m.grade),notes:m.notes||'',record_date:String(m.record_date).slice(0,10)})}>تعديل</button>
+                ])}/>
+                {form.record_id && <button className="primary" disabled={busy} onClick={()=>run(async()=>{await api.put(`/api/memorization/${form.record_id}`,{record_type:form.record_type,surah_no:Number(form.surah_no),from_ayah:Number(form.from_ayah),to_ayah:Number(form.to_ayah),grade:form.grade?Number(form.grade):null,notes:form.notes||'',record_date:form.record_date||today()});setMemorization(await get('/api/memorization'));setForm({})},'تم تعديل السجل')}>حفظ التعديل</button>}
+                <p>أرقام الآيات وفق العد الكوفي في مصحف حفص.</p>
               </section>
             )}
             {panel === 'المسابقات' && (
@@ -987,7 +991,7 @@ export default function App() {
                       rows={report.memorization.map((m: Row) => [
                         String(m.record_date).slice(0, 10),
                         recordTypes[m.record_type],
-                        m.surah_no,
+                        surahNames[Number(m.surah_no) - 1] || '—',
                         `${m.from_ayah}–${m.to_ayah}`,
                         m.grade ?? '—',
                         m.notes || '—',
