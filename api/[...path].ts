@@ -831,6 +831,17 @@ const routes: Record<string, RouterMiddleware[]> = {
     else throw new Fault('اختر حساب طالب أو ولي أمر');
     return json({ success: true });
   }),
+  'GET /api/public-stats': [
+    wrap(async () => {
+      const [centers,circles,students,records]=await Promise.all([
+        query("SELECT count(*)::int value FROM centers WHERE is_active"),
+        query("SELECT count(*)::int value FROM circles WHERE is_active"),
+        query("SELECT count(*)::int value FROM students WHERE status='active'"),
+        query("SELECT count(*)::int value FROM memorization_records")
+      ]);
+      return json({centers:centers.rows[0].value,circles:circles.rows[0].value,students:students.rows[0].value,records:records.rows[0].value});
+    })
+  ],
   'GET /api/news': [
     wrap(async () =>
       json(
