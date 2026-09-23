@@ -703,13 +703,23 @@ const routes: Record<string, RouterMiddleware[]> = {
     const u=await actor(ctx); permit(u,staff); const scope=studentScope(u);
     const rows=(await query(`SELECT s.id,s.full_name,h.name circle_name,
       coalesce((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent'),0)::int absences,
-      coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)::numeric(5,1) avg_grade
+      coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)::numeric(5,1) avg_grade,
+      coalesce((SELECT count(*) FROM weekly_plans wp WHERE wp.student_id=s.id AND wp.week_start>=current_date-interval '14 days' AND
+        ((coalesce(wp.review_target::numeric,0)>0 AND coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=wp.week_start + CASE wp.day_name WHEN 'السبت' THEN 0 WHEN 'الأحد' THEN 1 WHEN 'الاثنين' THEN 2 WHEN 'الثلاثاء' THEN 3 WHEN 'الأربعاء' THEN 4 WHEN 'الخميس' THEN 5 END AND m.record_type='review'),0)<wp.review_target::numeric)
+        OR (coalesce(wp.new_target::numeric,0)>0 AND coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=wp.week_start + CASE wp.day_name WHEN 'السبت' THEN 0 WHEN 'الأحد' THEN 1 WHEN 'الاثنين' THEN 2 WHEN 'الثلاثاء' THEN 3 WHEN 'الأربعاء' THEN 4 WHEN 'الخميس' THEN 5 END AND m.record_type='new'),0)<wp.new_target::numeric))),0)::int missed_targets,
+      coalesce((SELECT count(*) FROM generate_series(current_date-interval '13 days',current_date,interval '1 day') d WHERE extract(dow from d)<>5 AND NOT EXISTS(SELECT 1 FROM memorization_records m WHERE m.student_id=s.id AND m.record_type='review' AND m.record_date=d::date)),0)::int review_gaps
       FROM students s LEFT JOIN circles h ON h.id=s.circle_id
       WHERE ${scope.sql} AND s.status='active'
       AND ((SELECT count(*) FROM attendance a WHERE a.student_id=s.id AND a.attendance_date>=current_date-interval '14 days' AND a.status='absent')>=2
-        OR coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)<70)
+        OR coalesce((SELECT avg(m.grade) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date>=current_date-interval '14 days'),100)<70
+        OR (SELECT count(*) FROM weekly_plans wp WHERE wp.student_id=s.id AND wp.week_start>=current_date-interval '14 days' AND coalesce(wp.review_target::numeric,0)+coalesce(wp.new_target::numeric,0)>0)>=2)
       ORDER BY absences DESC,avg_grade`,scope.args)).rows;
-    return json(rows);
+    return json(rows.map((r:any)=>({...r,reasons:[
+      Number(r.absences)>=2?`غياب متكرر (${r.absences})`:null,
+      Number(r.avg_grade)<70?`متوسط منخفض (${r.avg_grade})`:null,
+      Number(r.missed_targets)>=2?`عدم تحقيق الورد (${r.missed_targets})`:null,
+      Number(r.review_gaps)>=3?`انقطاع عن المراجعة (${r.review_gaps} أيام)`:null
+    ].filter(Boolean)})));
   }),
   'GET /api/reports/center': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,supervisors); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
