@@ -740,6 +740,16 @@ const routes: Record<string, RouterMiddleware[]> = {
     if (!r.rowCount) throw new Fault('الرصيد غير كافٍ لخصم النقاط');
     return json(r.rows[0]);
   }),
+  'GET /api/guardian-preferences': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,['guardian']);
+    const row=(await query(`SELECT coalesce(p.frequency,'weekly') frequency FROM guardians g LEFT JOIN guardian_report_preferences p ON p.guardian_id=g.id WHERE g.user_id=$1`,[u.id])).rows[0];
+    return json(row||{frequency:'weekly'});
+  }),
+  'POST /api/guardian-preferences': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,['guardian']); const b=body(ctx); const frequency=choice(b.frequency,['weekly','monthly','quarterly','half_yearly','yearly']);
+    const g=(await query('SELECT id FROM guardians WHERE user_id=$1',[u.id])).rows[0]; if(!g) throw new Fault('حساب ولي الأمر غير مرتبط',404);
+    return json((await query(`INSERT INTO guardian_report_preferences(guardian_id,frequency) VALUES($1,$2) ON CONFLICT(guardian_id) DO UPDATE SET frequency=excluded.frequency,updated_at=now() RETURNING frequency`,[g.id,frequency])).rows[0]);
+  }),
   'GET /api/weekly-summary': protectedRoute(async (ctx) => {
     const u=await actor(ctx); const scope=studentScope(u); const from=date(ctx.query.from||weekStart()); const to=new Date(from+'T12:00:00');to.setDate(to.getDate()+5);const end=to.toISOString().slice(0,10);
     const rows=(await query(`SELECT s.id,s.full_name,
