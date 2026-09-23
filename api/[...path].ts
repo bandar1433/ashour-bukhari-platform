@@ -255,6 +255,20 @@ function permit(u: Actor, roles: string[]) {
 }
 const staff = ['system_admin', 'center_manager', 'supervisor', 'teacher'];
 const managers = ['system_admin', 'center_manager'];
+const supervisors = ['system_admin', 'center_manager', 'supervisor'];
+const WEEK_DAYS = ['السبت','الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس'];
+function weekStart(value = new Date()) {
+  const d = new Date(value);
+  const riyadh = new Date(d.toLocaleString('en-US',{timeZone:'Asia/Riyadh'}));
+  const day = riyadh.getDay();
+  const back = day === 6 ? 0 : day + 1;
+  riyadh.setDate(riyadh.getDate()-back);
+  return riyadh.toISOString().slice(0,10);
+}
+function splitTarget(total:number) {
+  const base=Math.floor(total/6), rem=total%6;
+  return WEEK_DAYS.map((day,i)=>({day,target:base+(i<rem?1:0)}));
+}
 // Every protected read is constrained by the verified account and its database role.
 function studentScope(u: Actor) {
   return {
@@ -595,6 +609,41 @@ const routes: Record<string, RouterMiddleware[]> = {
       ).rows[0],
       201,
     );
+  }),
+  'GET /api/weekly-plans': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const scope=studentScope(u);
+    const week=date(ctx.query.week_start || weekStart());
+    return json((await query(`SELECT wp.*,s.full_name FROM weekly_plans wp JOIN students s ON s.id=wp.student_id WHERE ${scope.sql} AND wp.week_start=$4 ORDER BY s.full_name,wp.day_name`,[...scope.args,week])).rows);
+  }),
+  'POST /api/weekly-plans': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx); const s=await student(u,b.student_id);
+    const week=date(b.week_start || weekStart()); const review=integer(b.review_total ?? 0,0,604); const fresh=integer(b.new_total ?? 0,0,604);
+    const rs=splitTarget(review), ns=splitTarget(fresh);
+    const client=await (await database()).connect();
+    try { await client.query('BEGIN');
+      for(let i=0;i<6;i++) await client.query(`INSERT INTO weekly_plans(student_id,week_start,day_name,new_target,review_target,goals,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(student_id,week_start,day_name) DO UPDATE SET new_target=excluded.new_target,review_target=excluded.review_target,goals=excluded.goals,created_by=excluded.created_by`,[s.id,week,WEEK_DAYS[i],String(ns[i].target),String(rs[i].target),typeof b.goals==='string'?b.goals.slice(0,2000):null,u.id]);
+      await client.query('COMMIT'); return json({success:true,week_start:week,review:rs,new:ns});
+    } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
+  }),
+  'GET /api/reports/center': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const from=date(ctx.query.from||weekStart()); const to=date(ctx.query.to||new Date().toISOString().slice(0,10));
+    const centerId=u.role==='system_admin'&&ctx.query.center_id?id(ctx.query.center_id):u.center_id; if(!centerId) throw new Fault('حدد المركز');
+    const [students,circles,attendance,memorization]=await Promise.all([
+      query('SELECT count(*)::int value FROM students WHERE center_id=$1 AND status=\'active\'',[centerId]),
+      query('SELECT count(*)::int value FROM circles WHERE center_id=$1 AND is_active',[centerId]),
+      query(`SELECT count(*)::int total,count(*) FILTER(WHERE a.status IN ('present','late'))::int present,count(*) FILTER(WHERE a.status='absent')::int absent FROM attendance a JOIN students s ON s.id=a.student_id WHERE s.center_id=$1 AND a.attendance_date BETWEEN $2 AND $3`,[centerId,from,to]),
+      query(`SELECT coalesce(sum(ayah_count) FILTER(WHERE record_type='new'),0)::int new_ayahs,coalesce(sum(ayah_count) FILTER(WHERE record_type='review'),0)::int review_ayahs FROM memorization_records m JOIN students s ON s.id=m.student_id WHERE s.center_id=$1 AND m.record_date BETWEEN $2 AND $3`,[centerId,from,to])
+    ]);
+    return json({from,to,students:students.rows[0].value,circles:circles.rows[0].value,attendance:attendance.rows[0],memorization:memorization.rows[0]});
+  }),
+  'GET /api/library': protectedRoute(async (ctx) => {
+    await actor(ctx);
+    return json((await query('SELECT * FROM library_items WHERE is_active ORDER BY section_name,sort_order,title')).rows);
+  }),
+  'POST /api/library': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
+    const url=text(b.youtube_url,'رابط يوتيوب',1000); if(!/^https:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) throw new Fault('أدخل رابط يوتيوب صالحاً');
+    return json((await query('INSERT INTO library_items(section_name,title,teacher_name,description,youtube_url,sort_order,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[text(b.section_name,'القسم'),text(b.title,'عنوان الدرس'),typeof b.teacher_name==='string'?b.teacher_name.slice(0,200):null,typeof b.description==='string'?b.description.slice(0,2000):null,url,Number(b.sort_order)||0,u.id])).rows[0],201);
   }),
   'GET /api/competitions': protectedRoute(async (ctx) => {
     const u=await actor(ctx);
