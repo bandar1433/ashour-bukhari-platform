@@ -849,17 +849,23 @@ export default function App() {
             {panel === 'المسابقات' && (
               <section className="panel">
                 <h2>المسابقات</h2>
-                {manager && (
+                {staff && (
                   <form onSubmit={submit('/api/competitions', {
                     title: form.competition_title,
                     start_date: form.competition_start,
                     end_date: form.competition_end,
                     center_id: form.center_id || undefined,
+                    circle_id: form.competition_circle_id || undefined,
+                    max_points: Number(form.competition_max_points || 100),
                   })}>
                     {admin && centerPick}
+                    {manager && <Field label="النطاق"><select value={form.competition_scope||'center'} onChange={e=>set('competition_scope',e.target.value)}><option value="center">مسابقة المركز</option><option value="circle">مسابقة حلقة</option></select></Field>}
+                    {manager && form.competition_scope==='circle' && <Field label="الحلقة"><Pick rows={circles} value={form.competition_circle_id||''} onChange={v=>set('competition_circle_id',v)}/></Field>}
+                    {account.role==='teacher' && <p>المسابقة خاصة بحلقتك.</p>}
                     {input('competition_title','اسم المسابقة')}
                     {input('competition_start','تاريخ البداية','date')}
                     {input('competition_end','تاريخ النهاية','date')}
+                    {input('competition_max_points','نقاط المسابقة','number')}
                     {saveButton}
                   </form>
                 )}
@@ -875,7 +881,7 @@ export default function App() {
                   })}>
                     <h3>إدخال نتيجة الطالب</h3>
                     {studentPick}
-                    {input('competition_score','الدرجة من 100','number')}
+                    {input('competition_score','النتيجة','number')}
                     {input('competition_notes','ملاحظات','text',false)}
                     {saveButton}
                   </form>
