@@ -153,6 +153,7 @@ export default function App() {
   const [centerReport, setCenterReport] = useState<any>(null);
   const [rankings, setRankings] = useState<any>(null);
   const [struggles, setStruggles] = useState<Row[]>([]);
+  const [publicStats, setPublicStats] = useState<any>(null);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -229,7 +230,10 @@ export default function App() {
   const checkConnection = async () => {
     const s = await get('/api/status');
     setConnection(s.configured);
-    if (s.configured) setNews(await get('/api/news'));
+    if (s.configured) {
+      const [n,ps]=await Promise.all([get('/api/news'),get('/api/public-stats')]);
+      setNews(n); setPublicStats(ps);
+    }
   };
   useEffect(() => {
     checkConnection()
@@ -439,6 +443,7 @@ export default function App() {
               </div>
             </div>
           </section>
+          {publicStats&&<section className="stats"><article><b>{publicStats.students}</b><span>طالب نشط</span></article><article><b>{publicStats.circles}</b><span>حلقة</span></article><article><b>{publicStats.centers}</b><span>مركز</span></article><article><b>{publicStats.records}</b><span>سجل إنجاز</span></article></section>}
           <section id="about" className="section">
             <h2>رحلة متصلة مع كتاب الله</h2>
             <div className="featureGrid">
