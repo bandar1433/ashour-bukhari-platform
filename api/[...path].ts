@@ -265,6 +265,12 @@ function weekStart(value = new Date()) {
   riyadh.setDate(riyadh.getDate()-back);
   return riyadh.toISOString().slice(0,10);
 }
+function attendancePoints(status:string, late:number|null|undefined) {
+  if(status==='excused') return null;
+  if(status==='absent') return 0;
+  const m=Math.max(0,Number(late||0));
+  return m<=30?30:m<=60?20:10;
+}
 function splitTarget(total:number) {
   const base=Math.floor(total/6), rem=total%6;
   return WEEK_DAYS.map((day,i)=>({day,target:base+(i<rem?1:0)}));
@@ -527,7 +533,7 @@ const routes: Record<string, RouterMiddleware[]> = {
     return json(
       (
         await query(
-          `SELECT a.* FROM attendance a JOIN students s ON s.id=a.student_id WHERE ${scope.sql} AND a.attendance_date=$4`,
+          `SELECT a.*,CASE WHEN a.status='excused' THEN NULL WHEN a.status='absent' THEN 0 WHEN coalesce(a.late_minutes,0)<=30 THEN 30 WHEN a.late_minutes<=60 THEN 20 ELSE 10 END attendance_score FROM attendance a JOIN students s ON s.id=a.student_id WHERE ${scope.sql} AND a.attendance_date=$4`,
           [...scope.args, date(ctx.query.date)],
         )
       ).rows,
@@ -622,6 +628,16 @@ const routes: Record<string, RouterMiddleware[]> = {
       201,
     );
   }),
+  'GET /api/daily-progress': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const d=date(ctx.query.date || new Date().toISOString().slice(0,10)); const scope=studentScope(u);
+    const week=weekStart(new Date(d+'T12:00:00')); const dayNames=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']; const dn=dayNames[new Date(d+'T12:00:00').getDay()];
+    const rows=(await query(`SELECT s.id,s.full_name,s.circle_id,wp.new_target,wp.review_target,a.status,a.late_minutes,
+      coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=$5 AND m.record_type='new'),0)::int actual_new,
+      coalesce((SELECT sum(m.ayah_count) FROM memorization_records m WHERE m.student_id=s.id AND m.record_date=$5 AND m.record_type='review'),0)::int actual_review
+      FROM students s LEFT JOIN weekly_plans wp ON wp.student_id=s.id AND wp.week_start=$4 AND wp.day_name=$6
+      LEFT JOIN attendance a ON a.student_id=s.id AND a.attendance_date=$5 WHERE ${scope.sql} AND s.status='active' ORDER BY s.full_name`,[...scope.args,week,d,dn])).rows;
+    return json(rows.map((r:any)=>{const nt=Number(r.new_target||0),rt=Number(r.review_target||0);const ap=attendancePoints(r.status,r.late_minutes);const review=rt?Math.min(40,Math.round(Number(r.actual_review||0)/rt*40)):40;const fresh=nt?Math.min(30,Math.round(Number(r.actual_new||0)/nt*30)):30;return {...r,attendance_score:ap,review_score:review,new_score:fresh,total_score:ap==null?null:ap+review+fresh};}));
+  }),
   'GET /api/weekly-plans': protectedRoute(async (ctx) => {
     const u=await actor(ctx); const scope=studentScope(u);
     const week=date(ctx.query.week_start || weekStart());
@@ -662,7 +678,7 @@ const routes: Record<string, RouterMiddleware[]> = {
     return json((await query(`SELECT * FROM competitions WHERE center_id IS NULL OR $1='system_admin' OR center_id=$2::uuid ORDER BY start_date DESC`,[u.role,u.center_id])).rows);
   }),
   'POST /api/competitions': protectedRoute(async (ctx) => {
-    const u=await actor(ctx); permit(u,managers); const b=body(ctx);
+    const u=await actor(ctx); permit(u,staff); const b=body(ctx);
     const centerId=u.role==='system_admin'&&b.center_id?await center(u,b.center_id):u.center_id;
     return json((await query(`INSERT INTO competitions(center_id,title,start_date,end_date,status,created_by) VALUES($1,$2,$3,$4,'active',$5) RETURNING *`,[centerId,text(b.title,'اسم المسابقة'),date(b.start_date),date(b.end_date),u.id])).rows[0],201);
   }),
