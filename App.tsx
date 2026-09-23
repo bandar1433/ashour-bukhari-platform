@@ -154,6 +154,8 @@ export default function App() {
   const [rankings, setRankings] = useState<any>(null);
   const [struggles, setStruggles] = useState<Row[]>([]);
   const [publicStats, setPublicStats] = useState<any>(null);
+  const [myDay, setMyDay] = useState<Row[]>([]);
+  const [weeklySummary, setWeeklySummary] = useState<any>(null);
   const [mushafPages, setMushafPages] = useState<{ from?: number; to?: number }>({});
   const admin = account?.role === 'system_admin';
   const manager = admin || account?.role === 'center_manager';
@@ -351,6 +353,8 @@ export default function App() {
           'المكتبة',
         ]
       : account?.role === 'student' ? ['الحضور اليومي'] : []),
+    ...(account?.role === 'student' ? ['وردي اليوم'] : []),
+    ...(account?.role === 'guardian' ? ['متابعة الأبناء'] : []),
     'النقاط والجوائز',
     'مركز التقارير',
     'التقارير',
@@ -871,6 +875,19 @@ export default function App() {
                     {saveButton}
                   </form>
                 )}
+              </section>
+            )}
+            {panel === 'وردي اليوم' && (
+              <section className="panel">
+                <h2>وردي اليوم</h2><button disabled={busy} onClick={()=>run(async()=>setMyDay(await get(`/api/my-day?date=${today()}`)))}>عرض ورد اليوم</button>
+                {myDay.map(x=><article className="panel" key={x.id}><h3>{x.full_name}</h3><p>المراجعة: {x.actual_review||0} من {x.review_target||0} — الدرجة {x.review_score}/40</p><p>الحفظ الجديد: {x.actual_new||0} من {x.new_target||0} — الدرجة {x.new_score}/30</p><p>الحضور: {x.attendance_score??'مستبعد'}/30</p><h3>المجموع: {x.total_score??'مستبعد'} / 100</h3></article>)}
+              </section>
+            )}
+            {panel === 'متابعة الأبناء' && (
+              <section className="panel">
+                <h2>متابعة الأبناء</h2><p>ملخص أسبوعي تلقائي للحضور ومستوى الحفظ والمراجعة.</p>
+                <button disabled={busy} onClick={()=>run(async()=>setWeeklySummary(await get('/api/weekly-summary'))}>عرض التقرير الأسبوعي</button>
+                {weeklySummary&&<><p>الفترة: {weeklySummary.from} — {weeklySummary.to}</p><Table heads={['الطالب','أيام الحضور','الغياب','متوسط الأداء']} rows={weeklySummary.students.map((x:Row)=>[x.full_name,x.attended,x.absent,x.memorization_average])}/></>}
               </section>
             )}
             {panel === 'النقاط والجوائز' && (
