@@ -897,7 +897,9 @@ export default function App() {
             )}
             {panel === 'متابعة الأبناء' && (
               <section className="panel">
-                <h2>متابعة الأبناء</h2><p>ملخص أسبوعي تلقائي للحضور ومستوى الحفظ والمراجعة.</p>
+                <h2>متابعة الأبناء</h2><p>ملخص تلقائي للحضور ومستوى الحفظ والمراجعة.</p>
+                <Field label="دورية التقرير"><select value={form.guardian_frequency||'weekly'} onChange={e=>set('guardian_frequency',e.target.value)}><option value="weekly">أسبوعي</option><option value="monthly">شهري</option><option value="quarterly">ربع سنوي</option><option value="half_yearly">نصف سنوي</option><option value="yearly">سنوي</option></select></Field>
+                <button disabled={busy} onClick={()=>run(async()=>{await post('/api/guardian-preferences',{frequency:form.guardian_frequency||'weekly'})},'تم حفظ دورية التقرير')}>حفظ الدورية</button>
                 <button disabled={busy} onClick={()=>run(async()=>setWeeklySummary(await get('/api/weekly-summary'))}>عرض التقرير الأسبوعي</button>
                 {weeklySummary&&<><p>الفترة: {weeklySummary.from} — {weeklySummary.to}</p><Table heads={['الطالب','أيام الحضور','الغياب','متوسط الأداء']} rows={weeklySummary.students.map((x:Row)=>[x.full_name,x.attended,x.absent,x.memorization_average])}/></>}
               </section>
