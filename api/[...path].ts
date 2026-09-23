@@ -876,9 +876,16 @@ const routes: Record<string, RouterMiddleware[]> = {
       ),
     ),
   ],
-  'POST /api/news': adminRoute(async (ctx) => {
+  'PUT /api/news/:id': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
+    const title=text(b.title,'العنوان'), newsBody=text(b.body,'النص',10000), kind=choice(b.kind,['news','event','achievement']);
+    const status=choice(b.status||'published',['published','hidden']);
+    const r=await query(`UPDATE news_events SET title=$1,body=$2,kind=$3,status=$4,published_at=CASE WHEN $4='published' THEN coalesce(published_at,now()) ELSE published_at END WHERE id=$5 RETURNING id,title,body,kind,status,published_at`,[title,newsBody,kind,status,id(ctx.params.id)]);
+    if(!r.rowCount) throw new Fault('الخبر غير موجود',404); return json(r.rows[0]);
+  }),
+  'POST /api/news': protectedRoute(async (ctx) => {
     const u = await actor(ctx);
-    permit(u, ['system_admin']);
+    permit(u, supervisors);
     const b = body(ctx);
     return json(
       (
