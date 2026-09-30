@@ -176,6 +176,7 @@ export default function App() {
   const [dailyProgress, setDailyProgress] = useState<Row[]>([]);
   const [weeklyPlans, setWeeklyPlans] = useState<Row[]>([]);
   const [libraryItems, setLibraryItems] = useState<Row[]>([]);
+  const [notifications, setNotifications] = useState<Row[]>([]);
   const [centerReport, setCenterReport] = useState<any>(null);
   const [rankings, setRankings] = useState<any>(null);
   const [struggles, setStruggles] = useState<Row[]>([]);
@@ -234,6 +235,8 @@ export default function App() {
     setRewards(r);
     if (isStaff) setCompetitions(await get('/api/competitions'));
     if (isStaff) setMemorization(await get('/api/memorization'));
+    setLibraryItems(await get('/api/library'));
+    setNotifications(await get('/api/notifications'));
   };
   const loadSession = async () => {
     const identity = await auth.getUser();
@@ -389,15 +392,18 @@ export default function App() {
           'الحضور اليومي',
           'الحفظ والمراجعة',
           'المسابقات',
-          'المكتبة',
+          'إعدادات الحلقة',
         ]
       : account?.role === 'student' ? ['الحضور اليومي'] : []),
     ...(account?.role === 'student' ? ['وردي اليوم','رحلتي مع القرآن'] : []),
     ...(account?.role === 'guardian' ? ['متابعة الأبناء'] : []),
+    'المكتبة',
+    'الإشعارات',
     'النقاط والجوائز',
     'مركز التقارير',
     'التقارير',
-    ...(admin ? ['المستخدمون والصلاحيات', 'الأخبار والفعاليات'] : []),
+    ...(['system_admin','center_manager','supervisor'].includes(account?.role || '') ? ['الأخبار والفعاليات'] : []),
+    ...(admin ? ['المستخدمون والصلاحيات'] : []),
   ];
   const navigate = (p: string) => {
     if (p !== panel) setPanelHistory((history) => [...history, panel].slice(-20));
@@ -513,11 +519,17 @@ export default function App() {
               </article>
             </div>
           </section>
+          <section className="section" id="library">
+            <h2>المكتبة</h2>
+            <p>دروس ومواد مختارة من إدارة الحلقات.</p>
+            <div className="featureGrid">{libraryItems.slice(0,6).map(x=><article key={x.id}><small>{x.section_name}</small><h3>{x.title}</h3><p>{x.teacher_name||''}</p><p>{x.description||''}</p><a className="secondary" href={x.youtube_url} target="_blank" rel="noreferrer">فتح المادة</a></article>)}</div>
+          </section>
           <section className="section">
             <h2>الأخبار والإنجازات</h2>
             {news.length ? (
               news.map((n) => (
                 <article className="panel" key={n.id}>
+                  {n.image_data && <img src={n.image_data} alt={n.title} style={{width:'100%',maxHeight:360,objectFit:'cover',borderRadius:18,marginBottom:12}} />}
                   <h3>{n.title}</h3>
                   <p style={{ whiteSpace: 'pre-wrap' }}>{n.body}</p>
                 </article>
@@ -652,6 +664,17 @@ export default function App() {
                 <Table heads={['الطالب','الحضور /30','المراجعة /40','الحفظ الجديد /30','المجموع /100']} rows={dailyProgress.map(r=>[r.full_name,r.attendance_score ?? 'مستأذن',r.review_score,r.new_score,r.total_score ?? 'مستبعد'])}/>
               </section>
             )}
+            {panel === 'إعدادات الحلقة' && (
+              <section className="panel">
+                <h2>إعدادات الحلقة</h2>
+                <p>تجمع هنا إعدادات وقت الحلقة والحضور والتقييم والمسابقات، ولا يظهر لها تبويب مستقل مكرر.</p>
+                {circles.map(h=><article className="panel" key={h.id}>
+                  <h3>{h.name}</h3>
+                  <div className="actions"><Field label="وقت بداية الحلقة"><input type="time" value={form[`start_${h.id}`]||String(h.start_time||'').slice(0,5)} onChange={e=>set(`start_${h.id}`,e.target.value)}/></Field><button disabled={busy||!form[`start_${h.id}`]} onClick={()=>run(async()=>{await api.put(`/api/circles/${h.id}/start-time`,{start_time:form[`start_${h.id}`]});await refresh(account)},'تم حفظ إعدادات الحلقة')}>حفظ</button></div>
+                  <p>التقييم اليومي المعتمد: الحضور والانضباط 30%، المراجعة 40%، الحفظ الجديد 30%. الجمعة إجازة، والمسابقة الخاصة بالحَلقة تظهر لطلابها فقط، بينما مسابقة المركز عامة لجميع حلقاته.</p>
+                </article>)}
+              </section>
+            )}
             {panel === 'الخطة الأسبوعية' && (
               <section className="panel">
                 <h2>الخطة الأسبوعية</h2>
@@ -757,7 +780,6 @@ export default function App() {
             {panel === 'الحضور اليومي' && (
               <section className="panel">
                 <h2>الحضور والانصراف</h2>
-                {staff && <div className="panel"><h3>وقت بداية الحلقة</h3><p>يستخدم في احتساب التأخر تلقائيًا. ويمكن للمعلم ضبط وقت حلقته.</p>{circles.map(h=><div className="actions" key={h.id}><b>{h.name}</b><input type="time" value={form[`start_${h.id}`]||String(h.start_time||'').slice(0,5)} onChange={e=>set(`start_${h.id}`,e.target.value)}/><button disabled={busy||!form[`start_${h.id}`]} onClick={()=>run(async()=>{await api.put(`/api/circles/${h.id}/start-time`,{start_time:form[`start_${h.id}`]});await refresh(account)},'تم حفظ وقت بداية الحلقة')}>حفظ الوقت</button></div>)}</div>}
                 <Field label="تاريخ الحضور">
                   <input type="date" required value={account?.role === 'student' ? today() : day} disabled={account?.role === 'student'} onChange={(e)=>{setDay(e.target.value);setAttendance([])}} />
                 </Field>
@@ -1048,6 +1070,14 @@ export default function App() {
                 <div className="featureGrid">{libraryItems.map(x=><article key={x.id}><small>{x.section_name}</small><h3>{x.title}</h3><p>{x.teacher_name||''}</p><p>{x.description||''}</p><a className="secondary" href={x.youtube_url} target="_blank" rel="noreferrer">فتح الدرس</a></article>)}</div>
               </section>
             )}
+            {panel === 'الإشعارات' && (
+              <section className="panel">
+                <h2>الإشعارات</h2>
+                <button disabled={busy} onClick={()=>run(async()=>setNotifications(await get('/api/notifications')))}>تحديث الإشعارات</button>
+                {['system_admin','center_manager','supervisor'].includes(account.role) && <form onSubmit={(e)=>{e.preventDefault();run(async()=>{await post('/api/notifications',{title:form.notification_title,body:form.notification_body});setNotifications(await get('/api/notifications'));setForm({})},'تم إرسال الإشعار')}}>{input('notification_title','عنوان الإشعار')}{input('notification_body','نص الإشعار')}{saveButton}</form>}
+                <div className="featureGrid">{notifications.map(n=><article key={n.id}><small>{n.is_read?'مقروء':'جديد'}</small><h3>{n.title}</h3><p>{n.body}</p>{!n.is_read&&<button onClick={()=>run(async()=>{await api.put(`/api/notifications/${n.id}/read`,{});setNotifications(await get('/api/notifications'))})}>تحديد كمقروء</button>}</article>)}</div>
+              </section>
+            )}
             {panel === 'مركز التقارير' && (
               <section className="panel report">
                 <h2>مركز التقارير</h2>
@@ -1232,6 +1262,7 @@ export default function App() {
                         title: form.title,
                         body: form.body,
                         kind: form.kind || 'news',
+                        image_data: form.image_data || null,
                       });
                       setNews(await get('/api/news'));
                       setForm({});
@@ -1249,6 +1280,10 @@ export default function App() {
                       <option value="achievement">إنجاز</option>
                     </select>
                   </Field>
+                  <Field label="صورة الخبر من الجهاز / الاستديو">
+                    <input type="file" accept="image/*" onChange={(e)=>{const file=e.target.files?.[0];if(!file)return;if(file.size>2*1024*1024){setNotice('حجم الصورة يجب ألا يتجاوز 2 ميجابايت');return;}const reader=new FileReader();reader.onload=()=>set('image_data',String(reader.result||''));reader.readAsDataURL(file)}} />
+                  </Field>
+                  {form.image_data && <img src={form.image_data} alt="معاينة" style={{width:'100%',maxHeight:260,objectFit:'cover',borderRadius:16}} />}
                   <Field label="النص">
                     <textarea
                       required
@@ -1262,11 +1297,11 @@ export default function App() {
                 </form>
                 {news.map((n) => (
                   <article key={n.id}>
-                    <h3>{n.title}</h3><p>{n.body}</p>
-                    <button onClick={()=>setForm({news_id:n.id,title:n.title,body:n.body,kind:n.kind||'news'})}>تعديل</button>
+                    {n.image_data&&<img src={n.image_data} alt={n.title} style={{width:'100%',maxHeight:240,objectFit:'cover',borderRadius:14}} />}<h3>{n.title}</h3><p>{n.body}</p>
+                    <button onClick={()=>setForm({news_id:n.id,title:n.title,body:n.body,kind:n.kind||'news',image_data:n.image_data||''})}>تعديل</button>
                   </article>
                 ))}
-                {form.news_id&&<button className="primary" disabled={busy} onClick={()=>run(async()=>{await api.put(`/api/news/${form.news_id}`,{title:form.title,body:form.body,kind:form.kind||'news',status:'published'});setNews(await get('/api/news'));setForm({})},'تم تحديث الخبر')}>حفظ تعديل الخبر</button>}
+                {form.news_id&&<button className="primary" disabled={busy} onClick={()=>run(async()=>{await api.put(`/api/news/${form.news_id}`,{title:form.title,body:form.body,kind:form.kind||'news',status:'published',image_data:form.image_data||null});setNews(await get('/api/news'));setForm({})},'تم تحديث الخبر')}>حفظ تعديل الخبر</button>}
               </section>
             )}
           </section>
