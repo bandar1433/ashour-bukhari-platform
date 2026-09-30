@@ -33,3 +33,21 @@ CREATE TABLE IF NOT EXISTS guardian_report_preferences (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  body text NOT NULL,
+  kind text NOT NULL DEFAULT 'admin_message',
+  recipient_user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  created_by uuid REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id uuid NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(notification_id,user_id)
+);
