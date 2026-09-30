@@ -735,10 +735,7 @@ const routes: Record<string, RouterMiddleware[]> = {
     ]);
     return json({from,to,students:students.rows[0].value,circles:circles.rows[0].value,attendance:attendance.rows[0],memorization:memorization.rows[0]});
   }),
-  'GET /api/library': protectedRoute(async (ctx) => {
-    await actor(ctx);
-    return json((await query('SELECT * FROM library_items WHERE is_active ORDER BY section_name,sort_order,title')).rows);
-  }),
+  'GET /api/library': [wrap(async () => json((await query('SELECT * FROM library_items WHERE is_active ORDER BY section_name,sort_order,title')).rows))],
   'POST /api/library': protectedRoute(async (ctx) => {
     const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
     const url=text(b.youtube_url,'رابط يوتيوب',1000); if(!/^https:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) throw new Fault('أدخل رابط يوتيوب صالحاً');
@@ -919,7 +916,7 @@ const routes: Record<string, RouterMiddleware[]> = {
       json(
         (
           await query(
-            `SELECT id,title,body,kind,published_at FROM news_events WHERE status='published' ORDER BY published_at DESC LIMIT 50`,
+            `SELECT id,title,body,kind,image_data,published_at FROM news_events WHERE status='published' ORDER BY published_at DESC LIMIT 50`,
           )
         ).rows,
       ),
@@ -929,7 +926,9 @@ const routes: Record<string, RouterMiddleware[]> = {
     const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
     const title=text(b.title,'العنوان'), newsBody=text(b.body,'النص',10000), kind=choice(b.kind,['news','event','achievement']);
     const status=choice(b.status||'published',['published','hidden']);
-    const r=await query(`UPDATE news_events SET title=$1,body=$2,kind=$3,status=$4,published_at=CASE WHEN $4='published' THEN coalesce(published_at,now()) ELSE published_at END WHERE id=$5 RETURNING id,title,body,kind,status,published_at`,[title,newsBody,kind,status,id(ctx.params.id)]);
+    const imageData=typeof b.image_data==='string'&&b.image_data.startsWith('data:image/')?b.image_data:null;
+    if(imageData && imageData.length>2800000) throw new Fault('حجم صورة الخبر كبير جدًا');
+    const r=await query(`UPDATE news_events SET title=$1,body=$2,kind=$3,status=$4,image_data=$5,published_at=CASE WHEN $4='published' THEN coalesce(published_at,now()) ELSE published_at END WHERE id=$6 RETURNING id,title,body,kind,status,image_data,published_at`,[title,newsBody,kind,status,imageData,id(ctx.params.id)]);
     if(!r.rowCount) throw new Fault('الخبر غير موجود',404); return json(r.rows[0]);
   }),
   'POST /api/news': protectedRoute(async (ctx) => {
@@ -939,17 +938,35 @@ const routes: Record<string, RouterMiddleware[]> = {
     return json(
       (
         await query(
-          `INSERT INTO news_events(title,body,kind,status,created_by,published_at) VALUES($1,$2,$3,'published',$4,now()) RETURNING id,title,body`,
+          `INSERT INTO news_events(title,body,kind,status,image_data,created_by,published_at) VALUES($1,$2,$3,'published',$4,$5,now()) RETURNING id,title,body,image_data`,
           [
             text(b.title, 'العنوان'),
             text(b.body, 'النص', 10000),
             choice(b.kind, ['news', 'event', 'achievement']),
+            typeof b.image_data==='string'&&b.image_data.startsWith('data:image/')&&b.image_data.length<=2800000?b.image_data:null,
             u.id,
           ],
         )
       ).rows[0],
       201,
     );
+  }),
+  'GET /api/notifications': protectedRoute(async (ctx) => {
+    const u=await actor(ctx);
+    return json((await query(`SELECT n.id,n.title,n.body,n.kind,n.created_at,(nr.notification_id IS NOT NULL) is_read
+      FROM notifications n LEFT JOIN notification_reads nr ON nr.notification_id=n.id AND nr.user_id=$1
+      WHERE n.recipient_user_id IS NULL OR n.recipient_user_id=$1 ORDER BY n.created_at DESC LIMIT 100`,[u.id])).rows);
+  }),
+  'POST /api/notifications': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); permit(u,supervisors); const b=body(ctx);
+    return json((await query(`INSERT INTO notifications(title,body,kind,created_by) VALUES($1,$2,'admin_message',$3) RETURNING *`,[text(b.title,'عنوان الإشعار'),text(b.body,'نص الإشعار',3000),u.id])).rows[0],201);
+  }),
+  'PUT /api/notifications/:id/read': protectedRoute(async (ctx) => {
+    const u=await actor(ctx); const notificationId=id(ctx.params.id);
+    const exists=(await query('SELECT id FROM notifications WHERE id=$1 AND (recipient_user_id IS NULL OR recipient_user_id=$2)',[notificationId,u.id])).rowCount;
+    if(!exists) throw new Fault('الإشعار غير موجود',404);
+    await query('INSERT INTO notification_reads(notification_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[notificationId,u.id]);
+    return json({success:true});
   }),
   'GET /api/rewards': protectedRoute(async (ctx) => {
     await actor(ctx);
