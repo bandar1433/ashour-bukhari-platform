@@ -269,8 +269,8 @@ export default function App() {
     const s = await get('/api/status');
     setConnection(s.configured);
     if (s.configured) {
-      const [n,ps]=await Promise.all([get('/api/news'),get('/api/public-stats')]);
-      setNews(n); setPublicStats(ps);
+      const [n,ps,lib]=await Promise.all([get('/api/news'),get('/api/public-stats'),get('/api/library')]);
+      setNews(n); setPublicStats(ps); setLibraryItems(lib);
     }
   };
   useEffect(() => {
